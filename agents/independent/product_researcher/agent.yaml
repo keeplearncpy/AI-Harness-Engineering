@@ -1,0 +1,16 @@
+# Product Researcher — Market & Competitive Analysis Agent
+
+name: product_researcher
+type: independent
+description: Researches market trends, competitors, and provides product strategy insights
+
+input:
+  type: text
+  description: Product domain or idea to research
+
+output:
+  type: markdown
+  description: Research report with market analysis and recommendations
+
+trigger: on-demand
+stateful: false

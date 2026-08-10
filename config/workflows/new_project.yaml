@@ -1,0 +1,56 @@
+# New Project Workflow — End-to-end project generation
+
+name: new_project
+description: Generate a complete project from a product idea or requirements doc
+
+phases:
+  - phase: 1
+    name: requirements_analysis
+    agent: fsd_generator
+    input: user_query
+    output:
+      target: docs/SSD-SystemOverview.md
+      template: ssd_overview.md
+
+  - phase: 2
+    name: data_modeling
+    agent: data_modeler
+    depends_on: [requirements_analysis]
+    input: docs/SSD-SystemOverview.md
+    output:
+      target: design/db-schema.sql
+      schema: db_schema.json
+
+  - phase: 3
+    name: generation
+    parallel:
+      - agent: frontend_dev
+        depends_on: [data_modeling]
+        input:
+          - docs/SSD-SystemOverview.md
+          - design/db-schema.sql
+        output:
+          target: src/frontend/
+
+      - agent: backend_dev
+        depends_on: [data_modeling]
+        input:
+          - docs/SSD-SystemOverview.md
+          - design/db-schema.sql
+        output:
+          target: src/backend/
+
+  - phase: 4
+    name: testing
+    agent: tester
+    depends_on: [generation]
+    input:
+      - src/frontend/
+      - src/backend/
+    output:
+      target: tests/
+
+  - phase: 5
+    name: validation
+    agent: validator
+    depends_on: [testing]

@@ -1,0 +1,20 @@
+# FSD Generator — Requirements Analysis SubAgent
+
+name: fsd_generator
+type: subagent
+description: Analyzes product requirements and generates Functional Specification Documents
+
+input:
+  type: text
+  description: User's product idea or requirements description
+  required: true
+
+output:
+  type: markdown
+  schema: skills/schemas/fsd_output.json
+  template: skills/templates/ssd_overview.md
+  target: workspace/{project}/docs/SSD-SystemOverview.md
+
+pipeline_role: phase_1
+depends_on: []
+next: [data_modeler]

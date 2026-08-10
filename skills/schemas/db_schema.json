@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DB Schema Output Schema",
+  "description": "Constrains the output format of the Data Modeler SubAgent",
+  "type": "object",
+  "required": ["tables", "relationships", "ddl"],
+  "properties": {
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "columns", "primary_key"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type", "nullable"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" },
+                "nullable": { "type": "boolean" },
+                "default": { "type": "string" },
+                "unique": { "type": "boolean" },
+                "index": { "type": "boolean" },
+                "comment": { "type": "string" }
+              }
+            }
+          },
+          "primary_key": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "indexes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "columns"],
+              "properties": {
+                "name": { "type": "string" },
+                "columns": { "type": "array", "items": { "type": "string" } },
+                "unique": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from_table", "to_table", "type", "foreign_key_column"],
+        "properties": {
+          "from_table": { "type": "string" },
+          "to_table": { "type": "string" },
+          "type": { "enum": ["one_to_one", "one_to_many", "many_to_many"] },
+          "foreign_key_column": { "type": "string" },
+          "on_delete": { "type": "string", "default": "CASCADE" }
+        }
+      }
+    },
+    "ddl": {
+      "type": "string",
+      "description": "Full DDL SQL statement"
+    }
+  }
+}

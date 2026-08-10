@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Test Report Schema",
+  "description": "Constrains the output format of the Tester SubAgent",
+  "type": "object",
+  "required": ["project", "summary", "test_cases", "report"],
+  "properties": {
+    "project": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "required": ["total", "passed", "failed", "skipped"],
+      "properties": {
+        "total": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "skipped": { "type": "integer" },
+        "coverage_percent": { "type": "number" }
+      }
+    },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "category", "title", "steps", "expected_result"],
+        "properties": {
+          "id": { "type": "string" },
+          "category": { "enum": ["unit", "integration", "e2e"] },
+          "title": { "type": "string" },
+          "priority": { "enum": ["P0", "P1", "P2"] },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "expected_result": { "type": "string" }
+        }
+      }
+    },
+    "report": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["test_id", "status", "duration_ms"],
+        "properties": {
+          "test_id": { "type": "string" },
+          "status": { "enum": ["passed", "failed", "skipped"] },
+          "duration_ms": { "type": "number" },
+          "error_message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+# Code Reviewer — Code Quality & Security Audit Agent
+
+name: code_reviewer
+type: independent
+description: Reviews code for quality, security, and best practices compliance
+
+input:
+  type: code
+  description: Source code to review (file paths or diffs)
+
+output:
+  type: markdown
+  description: Review report with findings and suggestions
+
+trigger: on-demand
+stateful: false
