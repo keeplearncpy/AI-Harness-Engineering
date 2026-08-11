@@ -1,0 +1,15 @@
+{
+  "name": "ai-harness-engineering",
+  "version": "2.0.0",
+  "description": "AI-powered full-stack project scaffolding and iteration platform. Dual-mode: local skill/agent repo + standalone agent loop orchestrator.",
+  "private": true,
+  "scripts": {
+    "start": "python core/main.py",
+    "serve": "opencode serve --port 4096",
+    "engine": "python core/main.py",
+    "full": "npm run serve & sleep 2 && npm run engine"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest"
+  }
+}

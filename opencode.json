@@ -1,0 +1,37 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "name": "ai-harness-engineering",
+  "description": "AI-powered full-stack project scaffolding and iteration platform. Dual-mode: local skill/agent repo + standalone agent loop orchestrator.",
+  "version": "2.0.0",
+  "rules": {
+    "project_type": "orchestrator+toolkit",
+    "language": "zh-cn"
+  },
+  "agents": {
+    "directory": "agents",
+    "format": "md+yaml-frontmatter"
+  },
+  "skills": {
+    "directory": "skills",
+    "format": "SKILL.md+resources"
+  },
+  "commands": {
+    "directory": "commands"
+  },
+  "workflows": {
+    "new_project": {
+      "command": "/harness-new",
+      "description": "Create a full-stack project from a product idea",
+      "pipeline": ["harness-fsd", "harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
+    },
+    "iteration": {
+      "command": "/harness-iterate",
+      "description": "Iterate on an existing project",
+      "pipeline": ["harness-fsd", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
+    },
+    "full_pipeline": {
+      "description": "Teams + Power Automate + Yunxiao + OpenCode full lifecycle",
+      "pipeline": ["harness-teams-agent", "harness-fsd", "harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer", "harness-yunxiao-agent", "harness-observability"]
+    }
+  }
+}
