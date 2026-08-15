@@ -33,6 +33,10 @@ log = logging.getLogger("harness.orchestrator")
 class Orchestrator:
     """流水线编排器 —— agent loop 引擎。"""
 
+    def __init__(self):
+        # 闲聊会话缓存：key = "platform:chat_id" → opencode session_id
+        self._chat_sessions: dict[str, str] = {}
+
     @staticmethod
     def _agent(key: str) -> str:
         """按角色取实际 agent 名（见 settings.agent_map）。"""
@@ -64,6 +68,40 @@ class Orchestrator:
             return "抱歉，内部服务暂时不可用（OpenCode 引擎可能未启动），请稍后再试。"
 
     async def _handle_message(self, msg: UnifiedMessage) -> Optional[str]:
+        # 先让 opencode 判断意图：闲聊直接回复，项目请求走流水线
+        classification = await self._chat_classify(msg)
+
+        if classification.startswith("NEW_PROJECT"):
+            # 项目开发请求 → 进入澄清/流水线流程
+            return await self._start_project_flow(msg, msg.agent or self._agent("clarify"))
+        return classification
+
+    async def _chat_classify(self, msg: UnifiedMessage) -> str:
+        """把消息交给 opencode 主 agent：闲聊详细回复；项目请求返回 NEW_PROJECT 标记。"""
+        chat_key = f"{msg.platform}:{msg.chat_id}"
+        session_id = self._chat_sessions.get(chat_key)
+        if not session_id:
+            session_id = await opencode_client.create_session(f"Chat-{msg.platform}-{msg.chat_id}")
+            self._chat_sessions[chat_key] = session_id
+
+        prompt = f"""
+用户发来一条消息：
+
+{msg.text}
+
+请判断意图：
+- 如果用户明确要创建 / 开发 / 构建软件项目
+  （如"帮我建一个xxx项目"、"开发一个xxx系统"、"做一个xxx应用"），
+  请只回复一行：NEW_PROJECT
+- 否则，请直接详细地回答这条消息（闲聊、问答、分析等），
+  回答要详尽、结构化、有深度。
+
+用中文回答。"""
+        result = await opencode_client.prompt_agent(session_id, self._agent("chat"), prompt)
+        return (self._extract_text(result) or "").strip()
+
+    async def _start_project_flow(self, msg: UnifiedMessage, agent: str) -> Optional[str]:
+        """项目请求进入既有的澄清/流水线流程。"""
         reply_to_run_id = ""
 
         # 关联 (platform, chat_id) 对应的澄清线程
@@ -82,7 +120,6 @@ class Orchestrator:
             reply_to_run_id=reply_to_run_id,
         )
 
-        agent = msg.agent or self._agent("clarify")
         result = await self.handle_teams_trigger(payload, agent=agent)
 
         # 在会话上打上平台标识，便于后续关联
@@ -148,7 +185,8 @@ class Orchestrator:
             teams_user=payload.user,
         )
 
-        # 调用绑定 agent（多机器人时各自绑定）创建任务并分析需求
+        # 调用绑定 agent（多机器人时各自绑定）分析需求。
+        # 云效任务创建为尽力而为：无权限（403）时直接跳过，继续澄清。
         prompt = f"""
 You are the {agent}. A user just submitted a new project request:
 
@@ -156,7 +194,8 @@ USER REQUEST:
 {user_message}
 
 TASK:
-1. Create a task/story in Yunxiao for this request (via MCP).
+1. Try to create a task/story in Yunxiao for this request (via MCP).
+   If the token has no permission (e.g. 403), SKIP this step silently and continue.
 2. Analyze the requirements. Determine if they are clear enough to proceed.
 3. If requirements are UNCLEAR (missing scope, ambiguous features, no tech details):
    - Ask ONE specific follow-up question to clarify.
@@ -164,7 +203,6 @@ TASK:
    - Keep it concise — one question at a time.
 4. If requirements are CLEAR:
    - Respond: CONFIRMED: <summary of confirmed requirements>
-   - Include the Yunxiao task ID and link.
 
 Respond in Chinese."""
         result = await opencode_client.prompt_agent(session_id, agent, prompt)
@@ -233,7 +271,8 @@ PREVIOUS QUESTION: {conv.rounds[-1].question if conv.rounds else 'N/A'}
 USER ANSWER: {user_answer}
 
 TASK:
-1. Update the Yunxiao task with this new information (via MCP).
+1. Try to update the Yunxiao task with this new information (via MCP).
+   If the token has no permission (e.g. 403), SKIP this step silently and continue.
 2. Determine if requirements are now clear enough.
 3. If still UNCLEAR — ask ONE more specific question. Format: QUESTION: <question>
 4. If CLEAR — respond: CONFIRMED: <full summary of confirmed requirements>
@@ -286,10 +325,10 @@ Respond in Chinese. Be concise."""
         self._save_conversation(conv)
         state_manager.save(state)
 
-        # 把最终确认的需求记录到云效任务
+        # 把最终确认的需求记录到云效任务（尽力而为，无权限则跳过）
         await opencode_client.prompt_agent(
             state.session_id, conv.agent or self._agent("clarify"),
-            f"Record the final confirmed requirements in the Yunxiao task:\n{conv.confirmed_requirements}"
+            f"Try to record the final confirmed requirements in the Yunxiao task (skip silently if no permission):\n{conv.confirmed_requirements}"
         )
 
         # 后台启动流水线

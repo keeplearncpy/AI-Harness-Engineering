@@ -124,6 +124,7 @@ class Settings:
         可通过 HARNESS_AGENT_MAP（JSON）覆盖。
         """
         default_map = {
+            "chat": "build",                # 闲聊/问答（主 agent，回复质量最高）
             "clarify": "general",           # 澄清 / 云效任务（原 harness-yunxiao-agent）
             "fsd": "fsd_generator",         # 功能规格文档（原 harness-fsd）
             "data_modeler": "data_modeler",
