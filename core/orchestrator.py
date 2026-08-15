@@ -1,9 +1,9 @@
 """
-Harness Engine — Orchestrator (Agent Loop).
-The brain of AI Harness Engineering. Manages:
-  1. Clarification loop: ask Teams follow-up questions → save to Yunxiao task
-  2. Pipeline execution: FSD → Data → Code → Test → Review
-  3. CI/CD approval: Teams approval card → manual review → trigger pipeline
+Harness Engine — 编排器（Agent Loop）。
+AI Harness Engineering 的大脑，负责：
+  1. 澄清循环：向聊天平台追问 → 记录到云效任务
+  2. 流水线执行：FSD → 数据 → 代码 → 测试 → 评审
+  3. CI/CD 审批：审批卡片 → 人工确认 → 触发流水线
 """
 
 import uuid
@@ -25,66 +25,132 @@ from core.models import (
 )
 from core.config import settings
 from core.teams_notifier import teams_notifier
+from core.messaging import UnifiedMessage
 
 log = logging.getLogger("harness.orchestrator")
 
 
 class Orchestrator:
-    """Pipeline orchestrator — the agent loop engine."""
+    """流水线编排器 —— agent loop 引擎。"""
+
+    @staticmethod
+    def _agent(key: str) -> str:
+        """按角色取实际 agent 名（见 settings.agent_map）。"""
+        return settings.agent_map.get(key, key)
 
     async def start(self):
-        log.info("Orchestrator started — waiting for triggers")
+        log.info("编排器已启动 — 等待触发")
 
     async def stop(self):
-        log.info("Orchestrator stopped")
+        log.info("编排器已停止")
 
     # ===============================================================
-    # Entry: Teams Trigger
+    # 入口：平台无关消息（飞书 / 钉钉 / ...）
     # ===============================================================
 
-    async def handle_teams_trigger(self, payload: TeamsWebhookPayload) -> dict:
+    async def handle_message(self, msg: UnifiedMessage) -> Optional[str]:
         """
-        Process an incoming Teams message.
-        Returns a dict that can be sent back as a Teams reply.
-        """
+        所有聊天平台的统一入口。
+        平台不带 run_id 时通过 (platform, chat_id) 关联后续消息，
+        再委托给既有的对话/流水线流程。返回可选的回复文本。
 
-        # Check if this is a reply to an existing clarification thread
+        多机器人场景：msg.agent 由对应飞书应用配置决定，
+        实现一个机器人一个 agent。
+        """
+        try:
+            return await self._handle_message(msg)
+        except Exception as e:
+            log.error(f"[{msg.platform}] 处理消息失败 {msg.message_id}: {e}")
+            return "抱歉，内部服务暂时不可用（OpenCode 引擎可能未启动），请稍后再试。"
+
+    async def _handle_message(self, msg: UnifiedMessage) -> Optional[str]:
+        reply_to_run_id = ""
+
+        # 关联 (platform, chat_id) 对应的澄清线程
+        if msg.chat_id:
+            state = state_manager.find_by_chat(msg.platform, msg.chat_id)
+            if state is not None:
+                reply_to_run_id = state.run_id
+                log.info(f"[{reply_to_run_id}] 收到 {msg.platform} 会话 {msg.chat_id} 的后续消息")
+
+        payload = TeamsWebhookPayload(
+            text=msg.text,
+            user=msg.user_name or msg.user_id or "unknown",
+            channel_id=msg.chat_id,
+            channel_name="",
+            conversation_id=msg.chat_id,
+            reply_to_run_id=reply_to_run_id,
+        )
+
+        agent = msg.agent or self._agent("clarify")
+        result = await self.handle_teams_trigger(payload, agent=agent)
+
+        # 在会话上打上平台标识，便于后续关联
+        run_id = result.get("run_id", "")
+        if run_id:
+            state = state_manager.get(run_id)
+            if state is not None and state.conversation is not None:
+                state.conversation.platform = msg.platform
+                state.conversation.platform_chat_id = msg.chat_id
+                state.conversation.agent = agent
+                state_manager.save(state)
+                self._save_conversation(state.conversation)
+
+        return result.get("reply", "") or None
+
+    # ===============================================================
+    # 入口：Teams 触发
+    # ===============================================================
+
+    async def handle_teams_trigger(self, payload: TeamsWebhookPayload,
+                                   agent: str = None) -> dict:
+        """
+        处理收到的 Teams 消息。
+        返回可直接作为 Teams 回复的 dict。
+        """
+        if agent is None:
+            agent = self._agent("clarify")
+
+        # 是否为澄清线程的回复
         if payload.reply_to_run_id:
             return await self._handle_clarification_reply(payload)
 
-        # New request
+        # 新请求
         run_id = str(uuid.uuid4())[:8]
         original_text = payload.text or payload.description
 
-        log.info(f"[{run_id}] New request from Teams: {original_text[:100]}...")
+        log.info(f"[{run_id}] 收到新请求: {original_text[:100]}...")
 
-        # --- Phase 0: Clarification Loop ---
-        # Ask yunxiao-agent (via OpenCode MCP) to create a task and clarify requirements
-        return await self._start_clarification(run_id, original_text, payload)
+        # --- 阶段 0：澄清循环 ---
+        return await self._start_clarification(run_id, original_text, payload, agent)
 
     # ===============================================================
-    # Phase 0: Clarification Loop
+    # 阶段 0：澄清循环
     # ===============================================================
 
     async def _start_clarification(
-        self, run_id: str, user_message: str, payload: TeamsWebhookPayload
+        self, run_id: str, user_message: str, payload: TeamsWebhookPayload,
+        agent: str = None,
     ) -> dict:
-        """Start the clarification phase. Creates Yunxiao task, asks questions loop."""
+        """启动澄清阶段：创建云效任务，循环提问。"""
+        if agent is None:
+            agent = self._agent("clarify")
 
         session_id = await opencode_client.create_session(f"Clarify-{run_id}")
 
-        # Conversation state
+        # 会话状态
         conv = ConversationContext(
             run_id=run_id,
             state=ConversationState.CLARIFYING,
             original_message=user_message,
+            agent=agent,
             teams_channel_id=payload.channel_id,
             teams_user=payload.user,
         )
 
-        # Call zentao-agent or yunxiao-agent to create a task and review requirements
+        # 调用绑定 agent（多机器人时各自绑定）创建任务并分析需求
         prompt = f"""
-You are the yunxiao-agent. A user just submitted a new project request via Teams:
+You are the {agent}. A user just submitted a new project request:
 
 USER REQUEST:
 {user_message}
@@ -101,10 +167,10 @@ TASK:
    - Include the Yunxiao task ID and link.
 
 Respond in Chinese."""
-        result = await opencode_client.prompt_agent(session_id, "harness-yunxiao-agent", prompt)
+        result = await opencode_client.prompt_agent(session_id, agent, prompt)
         response_text = self._extract_text(result)
 
-        # Save conversation record
+        # 保存对话记录
         conv.rounds.append(ClarificationRound(
             round=1,
             question=response_text,
@@ -112,7 +178,7 @@ Respond in Chinese."""
         ))
         self._save_conversation(conv)
 
-        # Save initial state
+        # 保存初始状态
         state = PipelineState(
             run_id=run_id,
             project_name=f"project-{run_id}",
@@ -127,11 +193,11 @@ Respond in Chinese."""
         state_manager.save(state)
         await observability.start_run(state)
 
-        # If requirements already confirmed, jump to pipeline
+        # 需求已明确则直接进入流水线
         if response_text.startswith("CONFIRMED:"):
             return await self._requirements_confirmed(state, conv, response_text)
 
-        # Send question back to Teams
+        # 把问题返回聊天平台
         return {
             "reply": response_text,
             "run_id": run_id,
@@ -140,23 +206,24 @@ Respond in Chinese."""
         }
 
     async def _handle_clarification_reply(self, payload: TeamsWebhookPayload) -> dict:
-        """Handle a user's reply to a clarification question."""
+        """处理用户对澄清问题的回答。"""
         run_id = payload.reply_to_run_id
         state = state_manager.get(run_id)
         if state is None or state.conversation is None:
-            return {"reply": f"Unknown session: {run_id}. Please start a new request.", "run_id": run_id}
+            return {"reply": f"未知会话: {run_id}，请发起新的请求。", "run_id": run_id}
 
         conv = state.conversation
         user_answer = payload.text
 
-        # Record the answer in the last round
+        # 记录上一轮的回答
         if conv.rounds:
             conv.rounds[-1].answer = user_answer
 
-        log.info(f"[{run_id}] Clarification reply: {user_answer[:100]}...")
+        log.info(f"[{run_id}] 澄清回答: {user_answer[:100]}...")
         round_num = len(conv.rounds) + 1
 
-        # Send to agent for another round of analysis
+        # 交给绑定 agent 做下一轮分析
+        agent = conv.agent or self._agent("clarify")
         prompt = f"""
 The user answered the previous clarification question. Here is the context:
 
@@ -172,10 +239,10 @@ TASK:
 4. If CLEAR — respond: CONFIRMED: <full summary of confirmed requirements>
 
 Respond in Chinese. Be concise."""
-        result = await opencode_client.prompt_agent(state.session_id, "harness-yunxiao-agent", prompt)
+        result = await opencode_client.prompt_agent(state.session_id, agent, prompt)
         response_text = self._extract_text(result)
 
-        # Add new round
+        # 新增一轮
         conv.rounds.append(ClarificationRound(
             round=round_num,
             question=response_text,
@@ -184,15 +251,15 @@ Respond in Chinese. Be concise."""
         state.phases.append(PhaseStatus(
             phase_name="clarification",
             status="running",
-            agent="harness-yunxiao-agent",
-            result_summary=f"Round {round_num}: {response_text[:100]}",
+            agent=agent,
+            result_summary=f"第 {round_num} 轮: {response_text[:100]}",
         ))
 
         if len(conv.rounds) >= conv.max_rounds:
-            # Force stop — take whatever we have
-            response_text = f"CONFIRMED: Max rounds reached. Using available info:\n{conv.original_message}\nUser answers: {json.dumps([r.answer for r in conv.rounds])}"
+            # 达到最大轮数，用现有信息收尾
+            response_text = f"CONFIRMED: 达到最大轮数，使用现有信息:\n{conv.original_message}\n用户回答: {json.dumps([r.answer for r in conv.rounds])}"
 
-        # If confirmed, proceed to FSD
+        # 需求已明确则进入 FSD
         if response_text.startswith("CONFIRMED:"):
             return await self._requirements_confirmed(state, conv, response_text)
 
@@ -210,7 +277,7 @@ Respond in Chinese. Be concise."""
     async def _requirements_confirmed(
         self, state: PipelineState, conv: ConversationContext, confirmed_text: str
     ) -> dict:
-        """Requirements are confirmed. Proceed to the actual pipeline."""
+        """需求已确认，进入真正的流水线。"""
         conv.state = ConversationState.CONFIRMED
         conv.confirmed_requirements = confirmed_text.replace("CONFIRMED:", "").strip()
         state.conversation = conv
@@ -219,77 +286,77 @@ Respond in Chinese. Be concise."""
         self._save_conversation(conv)
         state_manager.save(state)
 
-        # Record to Yunxiao task (final confirmation)
+        # 把最终确认的需求记录到云效任务
         await opencode_client.prompt_agent(
-            state.session_id, "harness-yunxiao-agent",
+            state.session_id, conv.agent or self._agent("clarify"),
             f"Record the final confirmed requirements in the Yunxiao task:\n{conv.confirmed_requirements}"
         )
 
-        # Fire pipeline in background
+        # 后台启动流水线
         import asyncio
         asyncio.create_task(self._run_pipeline(state, conv))
 
         return {
-            "reply": f"✅ Requirements confirmed! Pipeline started.\n\n**Summary**:\n{conv.confirmed_requirements[:500]}",
+            "reply": f"✅ 需求已确认！流水线已启动。\n\n**需求摘要**:\n{conv.confirmed_requirements[:500]}",
             "run_id": state.run_id,
             "state": "running",
-            "phase": "Pipeline started: FSD generation in progress...",
+            "phase": "流水线已启动: FSD 生成中...",
         }
 
     # ===============================================================
-    # Pipeline Execution
+    # 流水线执行
     # ===============================================================
 
     async def _run_pipeline(self, state: PipelineState, conv: ConversationContext):
-        """Execute the full pipeline after requirements are confirmed."""
+        """需求确认后执行完整流水线。"""
         run_id = state.run_id
         try:
-            # ---- Phase 1: FSD ----
-            await self._run_phase(state, 1, "requirements", "harness-fsd", f"""
+            # ---- 阶段 1: FSD ----
+            await self._run_phase(state, 1, "requirements", self._agent("fsd"), f"""
 Generate a Functional Specification Document based on these confirmed requirements:
 
 {conv.confirmed_requirements}
 
-Follow the harness-fsd skill. Generate structured FSD documents with user stories, acceptance criteria, data entities, and API endpoints. Output in Chinese.""",
+Generate structured FSD documents with user stories, acceptance criteria, data entities, and API endpoints. Output in Chinese.""",
                 "docs/SSD-SystemOverview.md")
 
-            # ---- Phase 2: Data Model ----
-            await self._run_phase(state, 2, "data_modeling", "harness-data-modeler",
+            # ---- 阶段 2: 数据建模 ----
+            await self._run_phase(state, 2, "data_modeling", self._agent("data_modeler"),
                 "Based on the FSD generated above, design the complete database schema. Generate DDL SQL, ER diagram (Mermaid), and data dictionary.",
                 "design/db-schema.sql")
 
-            # ---- Phase 3: Code Generation ----
-            await self._run_phase(state, 3, "generation", "harness-backend-dev",
+            # ---- 阶段 3: 代码生成 ----
+            await self._run_phase(state, 3, "generation", self._agent("backend_dev"),
                 "Generate FastAPI backend code based on the FSD and DB schema. Implement all API endpoints, services, models, and middleware.",
                 "src/backend/")
-            await self._run_phase(state, 3, "generation_fe", "harness-frontend-dev",
+            await self._run_phase(state, 3, "generation_fe", self._agent("frontend_dev"),
                 "Generate React + TypeScript frontend code based on the FSD and API design. Implement all pages, components, services, and routing.",
                 "src/frontend/")
 
-            # ---- Phase 4: Testing ----
-            await self._run_phase(state, 4, "testing", "harness-tester",
-                "Generate comprehensive tests for the generated code. Cover unit, integration, and E2E scenarios. Follow the harness-testing skill.",
+            # ---- 阶段 4: 测试 ----
+            await self._run_phase(state, 4, "testing", self._agent("tester"),
+                "Generate comprehensive tests for the generated code. Cover unit, integration, and E2E scenarios.",
                 "tests/")
 
-            # ---- Phase 5: Code Review ----
-            await self._run_phase(state, 5, "review", "harness-reviewer",
+            # ---- 阶段 5: 代码评审 ----
+            await self._run_phase(state, 5, "review", self._agent("reviewer"),
                 "Review ALL generated code for quality, security vulnerabilities (OWASP Top 10), performance issues, and best practices. Generate a structured review report.",
                 "reviews/")
 
-            # ---- Phase 6: CI/CD Approval ----
+            # ---- 阶段 6: CI/CD 审批 ----
             conv.state = ConversationState.WAITING_APPROVAL
             state.status = "waiting_approval"
             state.current_phase = 6
             state_manager.save(state)
             self._save_conversation(conv)
 
-            # Send Teams approval card
+            # 发送 Teams 审批卡片
             await teams_notifier.send_approval_card(state, conv)
 
-            log.info(f"[{run_id}] Waiting for CI/CD manual approval...")
+            log.info(f"[{run_id}] 等待 CI/CD 人工审批...")
 
         except Exception as e:
-            log.error(f"[{run_id}] Pipeline failed: {e}")
+            log.error(f"[{run_id}] 流水线失败: {e}")
             state.status = "failed"
             state.error_message = str(e)
             state_manager.save(state)
@@ -297,30 +364,30 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
             await teams_notifier.send_error(run_id, str(e), conv.teams_channel_id)
 
     # ===============================================================
-    # Approval & Deployment
+    # 审批与部署
     # ===============================================================
 
     async def handle_approval(self, body: dict):
-        """Handle CI/CD manual approval from Teams/Power Automate."""
+        """处理来自 Teams/Power Automate 的 CI/CD 人工审批。"""
         run_id = body.get("run_id")
         approved = body.get("approved", False)
         comments = body.get("comments", "")
 
         state = state_manager.get(run_id)
         if state is None:
-            log.warning(f"Approval for unknown run: {run_id}")
+            log.warning(f"未知运行的审批: {run_id}")
             return
 
         conv = state.conversation
 
         if approved:
-            log.info(f"[{run_id}] CI/CD APPROVED. Triggering deploy...")
+            log.info(f"[{run_id}] CI/CD 已批准，触发部署...")
             state.status = "deploying"
             state_manager.save(state)
 
-            # Deploy via yunxiao-agent (MCP)
+            # 通过绑定 agent 触发部署
             await opencode_client.prompt_agent(
-                state.session_id, "harness-yunxiao-agent",
+                state.session_id, conv.agent or self._agent("clarify"),
                 f"Trigger the CI/CD deployment pipeline for run {run_id}. Approved by: {body.get('user', 'unknown')}. Comments: {comments}"
             )
 
@@ -334,7 +401,7 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
             await teams_notifier.send_completion(state, conv)
 
         else:
-            log.info(f"[{run_id}] CI/CD REJECTED: {comments}")
+            log.info(f"[{run_id}] CI/CD 已拒绝: {comments}")
             state.status = "rejected"
             state_manager.save(state)
             conv.state = ConversationState.FAILED
@@ -342,11 +409,11 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
             await teams_notifier.send_rejection(state, conv, comments)
 
     # ===============================================================
-    # Programmatic API (CLI trigger)
+    # 编程接口（CLI 触发）
     # ===============================================================
 
     async def new_project(self, description: str, options: dict = None) -> str:
-        """Programmatic trigger (from CLI, not Teams)."""
+        """编程式触发（来自 CLI，非聊天平台）。"""
         options = options or {}
         run_id = options.get("run_id", str(uuid.uuid4())[:8])
 
@@ -376,7 +443,7 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
         return run_id
 
     # ===============================================================
-    # Internal Helpers
+    # 内部辅助
     # ===============================================================
 
     async def _run_phase(self, state: PipelineState, phase_num: int,
@@ -391,7 +458,7 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
         ))
         state_manager.save(state)
 
-        log.info(f"[{state.run_id}] Phase {phase_num}: {agent} — {phase_name}")
+        log.info(f"[{state.run_id}] 阶段 {phase_num}: {agent} — {phase_name}")
 
         result = await opencode_client.prompt_agent(state.session_id, agent, prompt)
         result_text = self._extract_text(result)[:200]
@@ -404,7 +471,7 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
 
         await observability.record_phase(state.run_id, agent, phase_name, "success", {"summary": result_text})
 
-        # Notify Teams
+        # 通知 Teams
         if state.conversation and state.conversation.teams_channel_id:
             await teams_notifier.send_phase_update(state, phase_name, agent)
 
@@ -427,5 +494,5 @@ Follow the harness-fsd skill. Generate structured FSD documents with user storie
         return state_manager.get(run_id)
 
 
-# Singleton
+# 单例
 orchestrator = Orchestrator()

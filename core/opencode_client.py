@@ -1,6 +1,6 @@
 """
-Harness Engine — OpenCode HTTP API Client.
-Wraps the OpenCode server REST API for programmatic agent invocation.
+Harness Engine — OpenCode HTTP API 客户端。
+封装 OpenCode 服务的 REST API，用于程序化调用 agent。
 """
 
 import logging
@@ -13,14 +13,14 @@ log = logging.getLogger("harness.opencode_client")
 
 
 class OpenCodeClient:
-    """Client for OpenCode's HTTP server API (opencode serve)."""
+    """OpenCode HTTP 服务（opencode serve）的客户端。"""
 
     def __init__(self, base_url: str = None):
         self.base_url = base_url or f"http://{settings.opencode_host}:{settings.opencode_port}"
         self._client = httpx.AsyncClient(timeout=settings.opencode_timeout)
 
     # ---------------------------------------------------------------
-    # Health
+    # 健康检查
     # ---------------------------------------------------------------
 
     async def ping(self) -> bool:
@@ -31,7 +31,7 @@ class OpenCodeClient:
             return False
 
     # ---------------------------------------------------------------
-    # Agent Listing
+    # Agent 列表
     # ---------------------------------------------------------------
 
     async def list_agents(self) -> list[dict]:
@@ -40,7 +40,7 @@ class OpenCodeClient:
         return r.json()
 
     # ---------------------------------------------------------------
-    # Session Management
+    # 会话管理
     # ---------------------------------------------------------------
 
     async def create_session(self, title: str = "Harness Pipeline") -> str:
@@ -56,7 +56,7 @@ class OpenCodeClient:
         return r.status_code == 200
 
     # ---------------------------------------------------------------
-    # Prompt / Agent Invocation
+    # Prompt / Agent 调用
     # ---------------------------------------------------------------
 
     async def prompt(
@@ -68,7 +68,7 @@ class OpenCodeClient:
         system: Optional[str] = None,
         no_reply: bool = False,
     ) -> dict:
-        """Send a prompt to a session, optionally using a specific agent."""
+        """向会话发送 prompt，可指定使用的 agent。"""
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": text}],
         }
@@ -95,7 +95,7 @@ class OpenCodeClient:
         text: str,
         model: Optional[str] = None,
     ) -> dict:
-        """Convenience: send a prompt using a specific agent."""
+        """便捷方法：使用指定 agent 发送 prompt。"""
         return await self.prompt(session_id, text, agent=agent, model=model)
 
     async def command(
@@ -104,7 +104,7 @@ class OpenCodeClient:
         command: str,
         arguments: str = "",
     ) -> dict:
-        """Execute a slash command in a session."""
+        """在会话中执行斜杠命令。"""
         r = await self._client.post(
             f"{self.base_url}/session/{session_id}/command",
             json={"command": command, "arguments": arguments},
@@ -113,7 +113,7 @@ class OpenCodeClient:
         return r.json()
 
     # ---------------------------------------------------------------
-    # Messages
+    # 消息
     # ---------------------------------------------------------------
 
     async def list_messages(self, session_id: str, limit: int = 50) -> list[dict]:
@@ -125,7 +125,7 @@ class OpenCodeClient:
         return r.json()
 
     # ---------------------------------------------------------------
-    # File Operations
+    # 文件操作
     # ---------------------------------------------------------------
 
     async def read_file(self, path: str) -> str:
@@ -142,12 +142,12 @@ class OpenCodeClient:
         return r.json()
 
     # ---------------------------------------------------------------
-    # Cleanup
+    # 清理
     # ---------------------------------------------------------------
 
     async def close(self):
         await self._client.aclose()
 
 
-# Singleton
+# 单例
 opencode_client = OpenCodeClient()

@@ -1,6 +1,6 @@
 """
-Harness Engine — Observability.
-Tracks agent execution metrics, validates outputs, generates dashboards.
+Harness Engine — 可观测性。
+跟踪 agent 执行指标、校验产出、生成仪表盘。
 """
 
 import json
@@ -16,7 +16,7 @@ log = logging.getLogger("harness.observability")
 
 
 class Observability:
-    """Sidecar observability: tracks, validates, reports."""
+    """旁路可观测性：跟踪、校验、报告。"""
 
     def __init__(self, base_dir: str = None):
         if base_dir:
@@ -31,21 +31,21 @@ class Observability:
         self._records: dict[str, list[AgentExecutionRecord]] = {}
 
     # ===============================================================
-    # Run Lifecycle
+    # 运行生命周期
     # ===============================================================
 
     async def start_run(self, state: PipelineState):
         self._records[state.run_id] = []
-        log.info(f"Observability: starting run {state.run_id}")
+        log.info(f"可观测性: 开始运行 {state.run_id}")
 
     async def end_run(self, state: PipelineState):
         records = self._records.get(state.run_id, [])
         self._persist_log(state.run_id, records)
         self._generate_dashboard(state.run_id, state, records)
-        log.info(f"Observability: ended run {state.run_id} ({len(records)} records)")
+        log.info(f"可观测性: 结束运行 {state.run_id}（{len(records)} 条记录）")
 
     # ===============================================================
-    # Phase Recording
+    # 阶段记录
     # ===============================================================
 
     async def record_phase(
@@ -66,7 +66,6 @@ class Observability:
             ended_at=datetime.now(timezone.utc).isoformat(),
             duration_ms=duration_ms,
             status=status,
-            schema_valid=True,
             token_usage=token_usage or {},
         )
         if run_id not in self._records:
@@ -74,7 +73,7 @@ class Observability:
         self._records[run_id].append(record)
 
     # ===============================================================
-    # Persistence
+    # 持久化
     # ===============================================================
 
     def _persist_log(self, run_id: str, records: list[AgentExecutionRecord]):
@@ -84,7 +83,7 @@ class Observability:
                 f.write(r.model_dump_json() + "\n")
 
     # ===============================================================
-    # Dashboard Generation
+    # 仪表盘生成
     # ===============================================================
 
     def _generate_dashboard(self, run_id: str, state: PipelineState, records: list[AgentExecutionRecord]):
@@ -122,7 +121,7 @@ class Observability:
             f.write(dashboard)
 
     # ===============================================================
-    # Query API
+    # 查询 API
     # ===============================================================
 
     async def list_runs(self, limit: int = 20) -> list[dict]:

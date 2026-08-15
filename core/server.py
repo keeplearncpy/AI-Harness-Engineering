@@ -1,6 +1,7 @@
 """
-Harness Engine — FastAPI Webhook Server.
-Receives Teams webhooks, routes to orchestrator, returns replies.
+Harness Engine — FastAPI Webhook 服务。
+通过消息接入层接收各聊天平台（Teams、飞书等）的消息，
+路由到编排器，并返回回复。
 """
 
 import logging
@@ -19,17 +20,28 @@ from core.models import (
 from core.orchestrator import orchestrator
 from core.observability import observability
 from core.opencode_client import opencode_client
+from core.messaging import message_router
 
 log = logging.getLogger("harness.server")
+
+_listener_tasks = []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info(f"Harness Engine starting on {settings.host}:{settings.port}")
+    log.info(f"Harness Engine 启动于 {settings.host}:{settings.port}")
     await orchestrator.start()
+
+    # 启动主动消息接入（如飞书长连接），多机器人时每个应用各一条连接
+    _listener_tasks.extend(
+        await message_router.start_listeners(orchestrator.handle_message)
+    )
+
     yield
+
+    await message_router.stop_listeners(_listener_tasks)
     await orchestrator.stop()
-    log.info("Harness Engine stopped")
+    log.info("Harness Engine 已停止")
 
 
 app = FastAPI(
@@ -46,7 +58,7 @@ app.add_middleware(
 )
 
 # ================================================================
-# Health
+# 健康检查
 # ================================================================
 
 @app.get("/health", response_model=HealthResponse)
@@ -59,23 +71,23 @@ async def health():
 
 
 # ================================================================
-# Teams Webhook — Primary Entry Point
+# Teams Webhook — 主入口之一
 # ================================================================
 
 @app.post("/webhook/teams")
 async def teams_webhook(request: Request):
     """
-    Receive messages from Microsoft Teams via Power Automate.
-    Routes to orchestrator for clarification loop or pipeline execution.
+    通过 Power Automate 接收 Microsoft Teams 消息。
+    路由到编排器进行澄清循环或流水线执行。
     """
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Parse Teams message format (Power Automate may wrap it differently)
+    # 解析 Teams 消息格式（Power Automate 可能有不同包装）
     text = body.get("text", "")
-    # Support Power Automate Teams trigger format
+    # 兼容 Power Automate Teams 触发器格式
     if "command" in body:
         text = body.get("command", "") + " " + body.get("description", "")
     elif "triggerBody" in body:
@@ -98,18 +110,61 @@ async def teams_webhook(request: Request):
 
 
 # ================================================================
-# Pipeline Trigger — Programmatic API
+# 飞书 Webhook — 事件订阅模式
+# ================================================================
+
+@app.post("/webhook/lark")
+async def lark_webhook(request: Request):
+    """
+    接收飞书应用事件（单机器人场景）。
+    处理 URL 验证（challenge）、事件加密与 im.message.receive_v1 事件。
+    """
+    result = await message_router.handle_webhook("lark", request)
+    return JSONResponse(result.body, status_code=result.status_code)
+
+
+@app.post("/webhook/lark/{app_name}")
+async def lark_app_webhook(app_name: str, request: Request):
+    """
+    接收指定飞书应用的事件（多机器人场景）。
+    每个飞书应用在开发者后台配置不同的请求地址：
+      /webhook/lark/<应用名>
+    """
+    result = await message_router.handle_webhook("lark", request, name=app_name)
+    return JSONResponse(result.body, status_code=result.status_code)
+
+
+# ================================================================
+# 通用平台 Webhook — 任意注册进路由器的适配器
+# ================================================================
+
+@app.post("/webhook/message/{platform}")
+async def platform_webhook(platform: str, request: Request):
+    """所有已注册聊天平台的统一 webhook 入口（单实例平台）。"""
+    result = await message_router.handle_webhook(platform, request)
+    return JSONResponse(result.body, status_code=result.status_code)
+
+
+@app.post("/webhook/message/{platform}/{app_name}")
+async def platform_app_webhook(platform: str, app_name: str, request: Request):
+    """统一 webhook 入口（指定应用实例）。"""
+    result = await message_router.handle_webhook(platform, request, name=app_name)
+    return JSONResponse(result.body, status_code=result.status_code)
+
+
+# ================================================================
+# 流水线触发 — 编程接口
 # ================================================================
 
 @app.post("/pipeline/trigger")
 async def trigger_pipeline(req: PipelineTriggerRequest):
-    log.info(f"Pipeline trigger: {req.workflow} — {req.description[:80]}")
+    log.info(f"流水线触发: {req.workflow} — {req.description[:80]}")
     run_id = await orchestrator.new_project(req.description, req.options)
     return JSONResponse({"status": "started", "run_id": run_id})
 
 
 # ================================================================
-# Pipeline Status
+# 流水线状态
 # ================================================================
 
 @app.get("/pipeline/{run_id}/status")
@@ -130,12 +185,12 @@ async def pipeline_status(run_id: str):
 
 
 # ================================================================
-# Conversation Thread — View & Reply
+# 对话线程 — 查看与回复
 # ================================================================
 
 @app.get("/conversation/{run_id}")
 async def get_conversation(run_id: str):
-    """Get the full clarification conversation history."""
+    """获取完整的澄清对话历史。"""
     import json
     from pathlib import Path
     path = Path(__file__).parent.parent / ".harness" / "conversations" / f"{run_id}.json"
@@ -146,7 +201,7 @@ async def get_conversation(run_id: str):
 
 
 # ================================================================
-# Observability
+# 可观测性
 # ================================================================
 
 @app.get("/observability/runs")
@@ -171,12 +226,12 @@ async def run_dashboard(run_id: str):
 
 
 # ================================================================
-# Approval Webhook (Power Automate)
+# 审批 Webhook（Power Automate）
 # ================================================================
 
 @app.post("/webhook/approval")
 async def approval_webhook(request: Request):
     body = await request.json()
-    log.info(f"Approval webhook: run={body.get('run_id')} approved={body.get('approved')}")
+    log.info(f"审批 webhook: run={body.get('run_id')} approved={body.get('approved')}")
     await orchestrator.handle_approval(body)
     return JSONResponse({"status": "ok"})

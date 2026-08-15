@@ -1,0 +1,529 @@
+"""
+Harness Engine — 飞书（Lark）适配器。
+
+通过两种模式接收飞书机器人/应用的消息：
+
+  * webhook  — 事件订阅模式（"将事件发送至开发者服务器"）：
+      URL 验证（challenge）、签名校验（X-Lark-Signature）、
+      AES-256-CBC 解密（Encrypt Key）、解析 im.message.receive_v1 事件。
+  * websocket — 长连接模式（推荐，无需公网 URL）：
+      先调用 /callback/ws/endpoint 获取连接地址，
+      再收发 connect / ping-pong / event / disconnect 帧，
+      事件帧为 protobuf 编码（pbbp2.Frame），需回 ack。
+
+回复通过飞书开放平台 API（im/v1/messages/{message_id}/reply）发送，
+使用带过期缓存的 tenant_access_token。
+
+支持多机器人：每个 LarkAdapter 实例对应一个飞书应用，
+实例间 token 与长连接完全隔离。
+
+官方文档：
+  https://open.feishu.cn/document/ukTMukTMukTM/uYDNxYjL2QTM24iN0EjN
+"""
+
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import time
+from typing import Optional
+
+import httpx
+
+from core.config import settings
+from core.messaging.base import PlatformAdapter, UnifiedMessage, WebhookResult
+
+log = logging.getLogger("harness.messaging.lark")
+
+# 接收消息事件类型
+EVENT_MESSAGE_RECEIVE = "im.message.receive_v1"
+EVENT_URL_VERIFICATION = "url_verification"
+
+# 长连接接入点发现接口（当前网关协议）。
+# 返回的 URL 自带认证信息；connect 帧使用 tenant_access_token。
+WS_ENDPOINT_PATH = "/callback/ws/endpoint"
+
+PING_INTERVAL = 45        # 默认心跳间隔，会被接入点返回的 ClientConfig 覆盖
+RECONNECT_DELAY = 5       # 断线重连间隔（秒）
+TOKEN_EXPIRE_MARGIN = 60  # token 提前多少秒刷新
+
+
+# =============================================================
+# pbbp2.Frame 的最小 protobuf wire 编解码
+#   Frame  { uint64 SeqID=1; uint64 LogID=2; int32 service=3;
+#            int32 method=4; repeated Header headers=5;
+#            string payload_encoding=6; string payload_type=7;
+#            bytes payload=8; string LogIDNew=9; }
+#   Header { string key=1; string value=2; }
+# method: 0 = CONTROL（ping/pong...），1 = DATA（event/card...）
+# =============================================================
+
+def _pb_varint(value: int) -> bytes:
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _pb_read_varint(data: bytes, pos: int):
+    result = 0
+    shift = 0
+    while pos < len(data):
+        b = data[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+    return result, pos
+
+
+def _pb_field_varint(field: int, value: int) -> bytes:
+    return _pb_varint(field << 3) + _pb_varint(value)
+
+
+def _pb_field_bytes(field: int, data: bytes) -> bytes:
+    return _pb_varint((field << 3) | 2) + _pb_varint(len(data)) + data
+
+
+def parse_lark_frame(raw: bytes) -> dict:
+    """
+    解析 pbbp2.Frame 为普通字典。
+
+    注意：网关偶尔会用同一字段号发送空的 length-delimited 值
+    （例如空的 field 2）。为保证健壮性，标量字段（1/2/3/4）
+    只接受 varint wire type，5/8 只接受 length-delimited。
+    """
+    frame = {"seq_id": 0, "log_id": 0, "service": 0, "method": 0,
+             "headers": {}, "payload": b""}
+    pos, n = 0, len(raw)
+    while pos < n:
+        tag, pos = _pb_read_varint(raw, pos)
+        field, wt = tag >> 3, tag & 7
+        if wt == 0:
+            val, pos = _pb_read_varint(raw, pos)
+        elif wt == 2:
+            length, pos = _pb_read_varint(raw, pos)
+            val = raw[pos:pos + length]
+            pos += length
+        elif wt == 5:
+            val = raw[pos:pos + 4]
+            pos += 4
+        elif wt == 1:
+            val = raw[pos:pos + 8]
+            pos += 8
+        else:
+            break
+
+        if wt == 0:
+            if field == 1:
+                frame["seq_id"] = val
+            elif field == 2:
+                frame["log_id"] = val
+            elif field == 3:
+                frame["service"] = val
+            elif field == 4:
+                frame["method"] = val
+        elif wt == 2:
+            if field == 5:
+                # 解析 Header 子消息
+                key = value = ""
+                p2, m = 0, len(val)
+                while p2 < m:
+                    t2, p2 = _pb_read_varint(val, p2)
+                    f2, w2 = t2 >> 3, t2 & 7
+                    if w2 != 2:
+                        break
+                    ln, p2 = _pb_read_varint(val, p2)
+                    chunk = val[p2:p2 + ln]
+                    p2 += ln
+                    if f2 == 1:
+                        key = chunk.decode("utf-8", "replace")
+                    elif f2 == 2:
+                        value = chunk.decode("utf-8", "replace")
+                if key:
+                    frame["headers"][key] = value
+            elif field == 8:
+                frame["payload"] = val
+    return frame
+
+
+def build_lark_ack_frame(seq_id: int, log_id: int, service: int,
+                         headers: dict) -> bytes:
+    """构造每个事件所需的 DATA ack 帧（不 ack 网关会重推）。"""
+    out = bytearray()
+    out += _pb_field_varint(1, seq_id)
+    out += _pb_field_varint(2, log_id)
+    out += _pb_field_varint(3, service)
+    out += _pb_field_varint(4, 1)  # DATA
+    for k, v in headers.items():
+        item = _pb_field_bytes(1, k.encode()) + _pb_field_bytes(2, v.encode())
+        out += _pb_field_bytes(5, item)
+    out += _pb_field_bytes(8, b'{"code":200}')
+    return bytes(out)
+
+
+class LarkAdapter(PlatformAdapter):
+    """接收飞书应用消息并通过开放平台 API 回复。"""
+
+    platform = "lark"
+
+    def __init__(self, app_id: str = "", app_secret: str = "", name: str = "lark",
+                 agent: str = "", verification_token: str = "",
+                 encrypt_key: str = "", on_message=None):
+        super().__init__(on_message)
+        self.name = name                      # 应用名（多机器人区分）
+        self.agent = agent                    # 该机器人绑定的处理 agent
+        self._app_id = app_id or settings.lark_app_id
+        self._app_secret = app_secret or settings.lark_app_secret
+        self._verification_token = verification_token or settings.lark_verification_token
+        self._encrypt_key = encrypt_key or settings.lark_encrypt_key
+        self._client = httpx.AsyncClient(timeout=30)
+        self._token: Optional[str] = None
+        self._token_expires_at: float = 0.0
+        self._ws_task: Optional[asyncio.Task] = None
+        self._ping_interval = PING_INTERVAL
+
+    # =============================================================
+    # 能力判断
+    # =============================================================
+
+    def is_configured(self) -> bool:
+        return bool(self._app_id and self._app_secret)
+
+    # =============================================================
+    # tenant_access_token（带缓存，按实例隔离）
+    # =============================================================
+
+    async def _get_tenant_access_token(self) -> str:
+        if self._token and time.time() < self._token_expires_at:
+            return self._token
+
+        url = f"{settings.lark_domain}/open-apis/auth/v3/tenant_access_token/internal"
+        r = await self._client.post(url, json={
+            "app_id": self._app_id,
+            "app_secret": self._app_secret,
+        })
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"飞书 token 获取失败: {data}")
+
+        self._token = data["tenant_access_token"]
+        # expire 单位为秒
+        self._token_expires_at = time.time() + int(data.get("expire", 7200)) - TOKEN_EXPIRE_MARGIN
+        return self._token
+
+    # =============================================================
+    # webhook 模式 — 事件订阅
+    # =============================================================
+
+    async def handle_webhook(self, request) -> WebhookResult:
+        raw_body = await request.body()
+        try:
+            body = json.loads(raw_body)
+        except Exception:
+            return WebhookResult(status="error", status_code=400,
+                                 body={"code": 400, "msg": "invalid json"})
+
+        # --- 已开启加密策略（Encrypt Key）的载荷 ---
+        if "encrypt" in body:
+            if not self._encrypt_key:
+                return WebhookResult(status="error", status_code=400,
+                                     body={"code": 400, "msg": "未配置 encrypt_key"})
+            if not self._verify_signature(request.headers, raw_body):
+                return WebhookResult(status="error", status_code=401,
+                                     body={"code": 401, "msg": "invalid signature"})
+            body = self._decrypt(body["encrypt"])
+
+        # --- URL 验证：原样回传 challenge ---
+        if body.get("type") == EVENT_URL_VERIFICATION:
+            challenge = body.get("challenge", "")
+            log.info(f"[lark:{self.name}] 收到 URL 验证请求")
+            return WebhookResult(status="challenge", body={"challenge": challenge})
+
+        # --- 明文模式下校验 Verification Token ---
+        if not self._encrypt_key and self._verification_token:
+            token = body.get("header", {}).get("token", "")
+            if token and token != self._verification_token:
+                return WebhookResult(status="error", status_code=401,
+                                     body={"code": 401, "msg": "invalid token"})
+
+        # --- 只处理消息事件 ---
+        event_type = body.get("header", {}).get("event_type", "")
+        if event_type != EVENT_MESSAGE_RECEIVE:
+            return WebhookResult(status="ignored", body={"code": 0})
+
+        msg = self._parse_message_event(body.get("event", {}))
+        if msg is None:
+            return WebhookResult(status="ok", body={"code": 0})
+
+        # 在飞书超时前先应答，处理放到后台任务
+        if self.on_message:
+            asyncio.create_task(self._process(msg))
+        return WebhookResult(status="ok", body={"code": 0})
+
+    def _verify_signature(self, headers, raw_body: bytes) -> bool:
+        """校验 sha256(timestamp + nonce + encrypt_key + 原始报文) == X-Lark-Signature。"""
+        timestamp = headers.get("x-lark-request-timestamp", "")
+        nonce = headers.get("x-lark-request-nonce", "")
+        signature = headers.get("x-lark-signature", "")
+        if not (timestamp and nonce and signature):
+            return False
+        content = f"{timestamp}{nonce}{self._encrypt_key}".encode() + raw_body
+        expected = hashlib.sha256(content).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    def _decrypt(self, ciphertext: str) -> dict:
+        """AES-256-CBC 解密（key = sha256(encrypt_key)，iv = 前 16 字节）。"""
+        from Crypto.Cipher import AES
+        raw = base64.b64decode(ciphertext)
+        key = hashlib.sha256(self._encrypt_key.encode()).digest()
+        iv = raw[:AES.block_size]
+        cipher = AES.new(key, AES.MODE_CBC, iv)
+        plain = cipher.decrypt(raw[AES.block_size:])
+        # 去掉 PKCS7 填充
+        pad = plain[-1]
+        plain = plain[:-pad]
+        return json.loads(plain.decode("utf-8"))
+
+    # =============================================================
+    # 事件解析 — 飞书事件 → UnifiedMessage
+    # =============================================================
+
+    def _parse_message_event(self, event: dict) -> Optional[UnifiedMessage]:
+        message = event.get("message", {}) or {}
+
+        # 忽略机器人自己发的消息（防回环）
+        sender = event.get("sender", {}) or {}
+        if sender.get("sender_type") == "app":
+            return None
+        if (sender.get("sender_id", {}) or {}).get("sender_type") == "app":
+            return None
+
+        msg_type = message.get("message_type", "")
+        content = self._parse_json(message.get("content", ""))
+        if msg_type == "text":
+            text = content.get("text", "")
+        elif msg_type == "post":
+            text = self._extract_post_text(content)
+        else:
+            text = ""
+
+        text = (text or "").strip()
+        if not text:
+            return None
+
+        sender_id = sender.get("sender_id", {}) or {}
+        mentions = message.get("mentions", []) or []
+        return UnifiedMessage(
+            platform=self.platform,
+            message_id=message.get("message_id", ""),
+            chat_id=message.get("chat_id", ""),
+            chat_type=message.get("chat_type", ""),
+            text=text,
+            user_id=sender_id.get("open_id", "") or sender_id.get("user_id", ""),
+            user_name=sender_id.get("name", ""),
+            reply_to_message_id=message.get("parent_id", ""),
+            mentioned_bot=bool(mentions),
+            timestamp=message.get("create_time", ""),
+            app_id=self._app_id,
+            agent=self.agent,
+            raw=event,
+        )
+
+    @staticmethod
+    def _extract_post_text(content: dict) -> str:
+        """把富文本 post 消息压平成纯文本。"""
+        parts = []
+        for line in content.get("content", []) or []:
+            for seg in line:
+                if isinstance(seg, dict) and seg.get("tag") == "text":
+                    parts.append(seg.get("text", ""))
+        return "\n".join(parts).strip()
+
+    # =============================================================
+    # 回复 — 走开放平台 API
+    # =============================================================
+
+    async def send_reply(self, msg: UnifiedMessage, text: str) -> bool:
+        if not msg.message_id:
+            return False
+        try:
+            token = await self._get_tenant_access_token()
+            r = await self._client.post(
+                f"{settings.lark_domain}/open-apis/im/v1/messages/{msg.message_id}/reply",
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                json={"msg_type": "text",
+                      "content": json.dumps({"text": text})},
+            )
+            data = r.json()
+            if data.get("code") != 0:
+                log.error(f"[lark:{self.name}] 回复失败: {data}")
+                return False
+            return True
+        except Exception as e:
+            log.error(f"[lark:{self.name}] 回复异常: {e}")
+            return False
+
+    # =============================================================
+    # listener 模式 — 长连接（WebSocket）
+    # =============================================================
+
+    async def start_listener(self, on_message) -> Optional[asyncio.Task]:
+        if not self.is_configured():
+            log.info(f"[lark:{self.name}] 未配置凭证，跳过长连接")
+            return None
+        if settings.lark_event_mode != "websocket":
+            log.info(f"[lark:{self.name}] 事件模式为 '{settings.lark_event_mode}'，跳过长连接")
+            return None
+
+        self.on_message = on_message
+        self._ws_task = asyncio.create_task(self._ws_loop())
+        return self._ws_task
+
+    async def _ws_loop(self):
+        """
+        维护长连接，自动重连 + 心跳。
+
+        当前网关协议：
+          1. POST {domain}/callback/ws/endpoint → 返回带认证的 wss 地址
+          2. 连接后立即发送 {"type":"connect","token":...}
+          3. 事件帧为 protobuf pbbp2.Frame（method=DATA），必须逐一 ack；
+             兼容旧网关的 JSON 帧
+          4. 服务端 ping → 回 pong；客户端 ping 保活
+        """
+        import websockets
+
+        while True:
+            try:
+                ws_url = await self._get_ws_endpoint()
+                token = await self._get_tenant_access_token()
+                async with websockets.connect(ws_url, open_timeout=20) as ws:
+                    await ws.send(json.dumps({"type": "connect", "token": token}))
+
+                    heartbeat = asyncio.create_task(self._ws_heartbeat(ws))
+                    try:
+                        async for raw in ws:
+                            if await self._handle_ws_frame(ws, raw):
+                                break  # 服务端要求断开
+                    finally:
+                        heartbeat.cancel()
+                        await asyncio.gather(heartbeat, return_exceptions=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error(f"[lark:{self.name}] 长连接异常，{RECONNECT_DELAY}s 后重连: {e}")
+
+            await asyncio.sleep(RECONNECT_DELAY)
+
+    async def _get_ws_endpoint(self) -> str:
+        """获取长连接 wss 地址（当前网关协议）。"""
+        r = await self._client.post(
+            f"{settings.lark_domain}{WS_ENDPOINT_PATH}",
+            json={"AppID": self._app_id, "AppSecret": self._app_secret},
+        )
+        data = r.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"飞书长连接接入点获取失败: {data}")
+
+        cfg = data.get("data", {}).get("ClientConfig") or {}
+        if cfg.get("PingInterval"):
+            self._ping_interval = int(cfg["PingInterval"])
+        return data["data"]["URL"]
+
+    async def _ws_heartbeat(self, ws):
+        while True:
+            await asyncio.sleep(self._ping_interval)
+            await ws.send(json.dumps({"type": "ping"}))
+
+    async def _handle_ws_frame(self, ws, raw) -> bool:
+        """处理一个 ws 帧。返回 True 表示服务端要求断开。"""
+        if isinstance(raw, (bytes, bytearray)):
+            return await self._handle_ws_proto_frame(ws, bytes(raw))
+
+        try:
+            frame = json.loads(raw)
+        except Exception:
+            log.debug(f"[lark:{self.name}] 无法解析的 ws 帧: {raw[:120]}")
+            return False
+
+        ftype = frame.get("type")
+        if ftype == "connected":
+            log.info(f"[lark:{self.name}] 长连接已建立")
+        elif ftype == "connect":
+            # 网关对 connect 帧的回显 —— 连接已认证
+            log.info(f"[lark:{self.name}] 长连接认证成功（connect 回显）")
+        elif ftype == "ping":
+            # 服务端心跳请求
+            await ws.send(json.dumps({"type": "pong"}))
+        elif ftype == "event":
+            # 旧网关的 JSON 事件帧（兼容保留）
+            data = frame.get("data", {}) or {}
+            if data.get("header", {}).get("event_type") == EVENT_MESSAGE_RECEIVE:
+                msg = self._parse_message_event(data.get("event", {}))
+                if msg is not None and self.on_message:
+                    asyncio.create_task(self._process(msg))
+        elif ftype == "disconnect":
+            log.warning(f"[lark:{self.name}] 服务端要求断开: {frame.get('reason')}")
+            return True
+        elif ftype == "pong":
+            pass
+        else:
+            log.debug(f"[lark:{self.name}] 未处理的 ws 帧类型: {ftype}")
+        return False
+
+    async def _handle_ws_proto_frame(self, ws, raw: bytes) -> bool:
+        """处理 protobuf pbbp2.Frame（当前网关格式）。"""
+        try:
+            frame = parse_lark_frame(raw)
+        except Exception as e:
+            log.error(f"[lark:{self.name}] protobuf 帧解析失败: {e}")
+            return False
+
+        if frame["method"] != 1:  # CONTROL 帧无需 ack
+            return False
+
+        mtype = frame["headers"].get("type", "")
+        if mtype != "event":
+            log.debug(f"[lark:{self.name}] 忽略的 protobuf 帧类型: {mtype}")
+            return False
+
+        if int(frame["headers"].get("sum", "1")) > 1:
+            log.warning(f"[lark:{self.name}] 暂不支持分片事件（sum>1），已忽略")
+            return False
+
+        # 立即 ack —— 未 ack 的事件会被飞书重推
+        try:
+            ack = build_lark_ack_frame(
+                frame["seq_id"], frame["log_id"], frame["service"], frame["headers"])
+            await ws.send(ack)
+        except Exception as e:
+            log.error(f"[lark:{self.name}] ack 发送失败: {e}")
+
+        payload = frame["payload"]
+        if not payload or not payload.startswith(b"{"):
+            log.debug(f"[lark:{self.name}] 非 JSON 事件载荷: {payload[:120]}")
+            return False
+
+        data = json.loads(payload.decode("utf-8", "replace"))
+        if data.get("header", {}).get("event_type") == EVENT_MESSAGE_RECEIVE:
+            msg = self._parse_message_event(data.get("event", {}))
+            if msg is not None and self.on_message:
+                asyncio.create_task(self._process(msg))
+        return False
+
+    # =============================================================
+    # 清理
+    # =============================================================
+
+    async def close(self):
+        if self._ws_task and not self._ws_task.done():
+            self._ws_task.cancel()
+            await asyncio.gather(self._ws_task, return_exceptions=True)
+        await self._client.aclose()

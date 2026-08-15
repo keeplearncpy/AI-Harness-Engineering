@@ -1,6 +1,6 @@
 """
-Harness Engine — Teams Notification Helper.
-Sends Adaptive Cards and messages to Microsoft Teams channels.
+Harness Engine — Teams 通知助手。
+向 Microsoft Teams 频道发送 Adaptive Cards 和消息。
 """
 
 import json
@@ -15,7 +15,7 @@ log = logging.getLogger("harness.teams_notifier")
 
 
 class TeamsNotifier:
-    """Send messages to Teams via incoming webhook."""
+    """通过 incoming webhook 向 Teams 发送消息。"""
 
     def __init__(self):
         self._client = httpx.AsyncClient(timeout=30)
@@ -27,18 +27,18 @@ class TeamsNotifier:
 
     async def _send(self, payload: dict):
         if not self.is_configured:
-            log.info(f"Teams webhook not configured, skip notification: {payload.get('summary', '')}")
+            log.info(f"Teams webhook 未配置，跳过通知: {payload.get('summary', '')}")
             return
 
         try:
             r = await self._client.post(self.webhook_url, json=payload)
             r.raise_for_status()
-            log.info(f"Teams notification sent: {payload.get('summary', '')[:80]}")
+            log.info(f"Teams 通知已发送: {payload.get('summary', '')[:80]}")
         except Exception as e:
-            log.error(f"Failed to send Teams notification: {e}")
+            log.error(f"Teams 通知发送失败: {e}")
 
     # ===============================================================
-    # Phase Updates
+    # 阶段更新
     # ===============================================================
 
     async def send_phase_update(self, state: PipelineState, phase_name: str, agent: str):
@@ -61,7 +61,7 @@ class TeamsNotifier:
         })
 
     # ===============================================================
-    # CI/CD Approval Card
+    # CI/CD 审批卡片
     # ===============================================================
 
     async def send_approval_card(self, state: PipelineState, conv: ConversationContext):
@@ -103,7 +103,7 @@ class TeamsNotifier:
         })
 
     # ===============================================================
-    # Completion
+    # 完成
     # ===============================================================
 
     async def send_completion(self, state: PipelineState, conv: ConversationContext):
@@ -123,7 +123,7 @@ class TeamsNotifier:
         })
 
     # ===============================================================
-    # Error / Rejection
+    # 错误 / 拒绝
     # ===============================================================
 
     async def send_rejection(self, state: PipelineState, conv: ConversationContext, comments: str):
