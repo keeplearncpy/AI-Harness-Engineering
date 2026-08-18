@@ -2,7 +2,7 @@
 name: harness-teams-agent
 description: Microsoft Teams + Power Automate integration agent — receive tasks from Teams, send pipeline notifications, trigger approval workflows
 mode: subagent
-model: deepseek-v4-flash-0731
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.2
 permission:
   edit: allow

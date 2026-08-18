@@ -4,7 +4,7 @@
 This repository is **AI Harness Engineering** — a dual-purpose toolkit for AI-powered full-stack project scaffolding.
 
 ### Mode 1: Local Toolkit
-When installed via `install.sh`, each `agents/*.md` and `skills/*/` becomes an OpenCode subagent/skill that can be used in any project.
+When installed via `install.sh`, each `agents/*.md` and `skills/*/` becomes an OpenCode subagent/skill, and `commands/*.md` are installed to `~/.config/opencode/command/` as `/harness-new` and `/harness-iterate`. Typing `/harness-new <需求>` in any project makes the main agent act as orchestrator and run the full pipeline by invoking subagents phase by phase.
 
 ### Mode 2: Agent Loop Engine
 This repo itself runs as an orchestrator agent loop. The `harness-orchestrator` agent coordinates subagents, listens for Teams webhooks, and integrates with Yunxiao (云效) for CI/CD.

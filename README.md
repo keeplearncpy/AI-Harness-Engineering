@@ -3,8 +3,9 @@
 AI-powered full-stack project scaffolding and iteration platform.
 
 **双重身份 / Dual-Mode**:
-1. **本地工具包** — `install.sh` 一键安装到 OpenCode，每个 agent/skill 可独立使用
-2. **Agent Loop 引擎** — 自身是一个运行中的编排引擎，连接 Teams → Power Automate → 云效 → OpenCode，实现全流程自动化
+1. **本地工具包** — `install.sh` 一键安装 agents/skills/commands 到 OpenCode；
+   本地 `/harness-new`、`/harness-iterate` 命令即触发完整工作流（主 agent 扮演编排器）
+2. **Agent Loop 引擎** — 自身是一个运行中的编排引擎，连接飞书（默认）/ Teams → Power Automate → 云效 → OpenCode，实现全流程自动化
 
 ---
 
@@ -25,9 +26,21 @@ opencode serve --port 4096
 # 4. Start Harness Engine (in another terminal)
 python core/main.py
 
-# 5. Install agents/skills to local OpenCode
+# 5. Install agents/skills/commands to local OpenCode
 ./install.sh
 ```
+
+### Mode 1: 本地 OpenCode 工作流（不走引擎）
+
+安装后，在任何项目里启动 `opencode`，直接使用：
+
+```bash
+/harness-new <项目描述>      # 本地全流程：FSD → 原型/数据建模 → 前后端 → 测试 → 评审
+/harness-iterate <变更描述>  # 本地增量：新功能 / bug 修复 / 重构
+```
+
+命令注入后主 agent 自动扮演编排器，按阶段调用子代理完成整个工作流。
+（子代理按 `~/.config/opencode/agents/` 中的 harness-* 加载，无需引擎）
 
 The engine listens on `http://localhost:8000` for:
 - **Teams webhook** → `POST /webhook/teams`
@@ -123,9 +136,11 @@ ai-harness-engineering/
 │   ├── harness-teams-agent.md
 │   └── harness-observability.md
 │
-└── commands/                  # Shortcut commands
-    ├── harness-new.md         # /harness-new
-    └── harness-iterate.md     # /harness-iterate
+└── commands/                  # Shortcut commands（工作流入口）
+    ├── harness-new.md         # /harness-new — 本地全流程工作流
+    └── harness-iterate.md     # /harness-iterate — 本地增量工作流
+    # install.sh 会同步安装到 ~/.config/opencode/command/；
+    # 本仓库 .opencode/command/ 下有同名副本（仓库内直接可用）
 ```
 
 ## How It Actually Works

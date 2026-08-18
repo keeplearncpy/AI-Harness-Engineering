@@ -1,8 +1,8 @@
 ---
-name: harness-fsd （需求分析师）
+name: harness-fsd
 description: Analyze product requirements and generate Functional Specification Documents (FSD)
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.3
 ---
 

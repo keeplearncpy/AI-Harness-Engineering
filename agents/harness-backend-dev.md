@@ -2,7 +2,7 @@
 name: harness-backend-dev
 description: Generate production-ready backend code from FSD, SSD tech stack and DB schema
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.2
 ---
 

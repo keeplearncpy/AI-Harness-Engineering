@@ -1,7 +1,7 @@
 ---
 description: 根据功能规格文档设计数据库 Schema，产出 DDL、ER 图和数据字典
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.2
 permission:
   edit: allow

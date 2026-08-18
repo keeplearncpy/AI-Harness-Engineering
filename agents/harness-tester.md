@@ -2,7 +2,7 @@
 name: harness-tester
 description: Generate comprehensive test cases and test reports for frontend and backend code
 mode: subagent
-model: deepseek-v4-flash-0731
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.2
 ---
 

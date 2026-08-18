@@ -2,7 +2,7 @@
 name: harness-prototype
 description: Generate interactive HTML wireframe prototypes (pages, routes, menus, buttons, forms, click relationships) from FSD
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.3
 ---
 

@@ -1,7 +1,7 @@
 ---
 description: 根据 FSD 生成交互式前端原型 HTML（页面/路由/菜单/按钮/表单及点击跳转关系）
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.3
 permission:
   edit: allow

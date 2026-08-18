@@ -19,6 +19,7 @@ if [ "$1" = "--update" ] || [ "$1" = "-u" ]; then
 
     rm -f "$OPENCODE_CONFIG/agents/harness-"*
     rm -f "$OPENCODE_CONFIG/skills/harness-"*
+    rm -f "$OPENCODE_CONFIG/command/harness-"*.md
 
     rm -f "$CLAUDE_CONFIG/agents/harness-"*
     rm -f "$CLAUDE_CONFIG/skills/harness-"*
@@ -85,8 +86,9 @@ list_agent_md_files() {
 
 # ==========================================
 # 把扫描到的 agents 安装到目标目录（$1 = 目标 agents 目录）
-# 命名约定：
+# 命名约定（文件名已带 harness- 前缀则不重复添加）：
 #   <name>.md  -> harness-<name>.md          （OpenCode/Claude 识别加载）
+#   harness-<name>.md -> harness-<name>.md   （原样保留）
 #   agent.yaml -> harness-<name>.agent.yaml  （harness 元数据备份，CLI 会忽略，不需要可删）
 # ==========================================
 install_agents_to() {
@@ -106,12 +108,19 @@ install_agents_to() {
         case "$seen" in *" $agent_name "*) continue ;; esac
         seen="$seen$agent_name "
 
+        # 文件名已带 harness- 前缀时不重复添加
+        install_name="$agent_name"
+        case "$agent_name" in
+            harness-*) install_name="$agent_name" ;;
+            *)         install_name="harness-$agent_name" ;;
+        esac
+
         # 1) agent 主体 .md
-        safe_link "$md_file" "$dest_dir/harness-$agent_name.md"
+        safe_link "$md_file" "$dest_dir/$install_name.md"
 
         # 2) 同目录伴随的 agent.yaml 元数据
         if [ -f "$agent_dir/agent.yaml" ]; then
-            safe_link "$agent_dir/agent.yaml" "$dest_dir/harness-$agent_name.agent.yaml"
+            safe_link "$agent_dir/agent.yaml" "$dest_dir/$install_name.agent.yaml"
         fi
     done < <(list_agent_md_files)
 }
@@ -152,7 +161,7 @@ else
     echo "⚠️  未检测到 opencode 命令（可能不在 PATH），仍会写入配置: $OPENCODE_CONFIG"
 fi
 
-mkdir -p "$OPENCODE_CONFIG/agents" "$OPENCODE_CONFIG/skills"
+mkdir -p "$OPENCODE_CONFIG/agents" "$OPENCODE_CONFIG/skills" "$OPENCODE_CONFIG/command"
 
 # Skills
 safe_link "$HARNESS_HOME/skills/templates"  "$OPENCODE_CONFIG/skills/harness-templates"
@@ -161,6 +170,12 @@ safe_link "$HARNESS_HOME/skills/checklists" "$OPENCODE_CONFIG/skills/harness-che
 
 # Agents - 递归扫描 subagents / independent / agents 根目录
 install_agents_to "$OPENCODE_CONFIG/agents"
+
+# Commands（本地工作流入口：/harness-new、/harness-iterate）
+for cmd_file in "$HARNESS_HOME"/commands/harness-*.md; do
+    [ -f "$cmd_file" ] || continue
+    safe_link "$cmd_file" "$OPENCODE_CONFIG/command/$(basename "$cmd_file")"
+done
 
 echo "   → OpenCode 配置完成"
 

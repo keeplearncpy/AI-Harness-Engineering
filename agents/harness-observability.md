@@ -2,7 +2,7 @@
 name: harness-observability
 description: Monitor, visualize, and track every subagent's output — token usage, success rate, pipeline statistics
 mode: subagent
-model: deepseek-v4-flash-0731
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.1
 permission:
   edit: allow

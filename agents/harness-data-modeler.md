@@ -2,7 +2,7 @@
 name: harness-data-modeler
 description: Design database schemas from functional specifications
 mode: subagent
-model: deepseek-v4-flash-0731
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.2
 ---
 

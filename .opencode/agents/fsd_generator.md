@@ -1,7 +1,7 @@
 ---
 description: 分析产品需求，生成功能需求规格文档（FSD），按模块归档并编号
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.3
 permission:
   edit: allow

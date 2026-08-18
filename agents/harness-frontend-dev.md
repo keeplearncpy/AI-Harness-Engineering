@@ -2,7 +2,7 @@
 name: harness-frontend-dev
 description: Generate production-ready frontend code from FSD, SSD tech stack, prototype and data models
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.3
 ---
 

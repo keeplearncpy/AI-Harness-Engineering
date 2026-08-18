@@ -1,7 +1,7 @@
 ---
 description: 根据 FSD 和生成的前后端代码，编写测试用例和测试报告
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-flash-0731
 temperature: 0.2
 permission:
   edit: allow

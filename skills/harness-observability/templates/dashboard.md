@@ -60,12 +60,12 @@ graph LR
 
 | Agent | Input Tokens | Output Tokens | Total | Model |
 |-------|-------------|---------------|-------|-------|
-| harness-fsd | 400 | 1,100 | 1,500 | deepseek/deepseek-v4-pro |
-| harness-data-modeler | 300 | 500 | 800 | deepseek/deepseek-v4-pro |
-| harness-frontend-dev | 1,200 | 2,000 | 3,200 | deepseek/deepseek-v4-pro |
-| harness-backend-dev | 1,000 | 1,600 | 2,600 | deepseek/deepseek-v4-pro |
-| harness-tester | 400 | 700 | 1,100 | deepseek/deepseek-v4-pro |
-| harness-reviewer | 200 | 200 | 400 | deepseek/deepseek-v4-pro |
+| harness-fsd | 400 | 1,100 | 1,500 | deepseek/deepseek-v4-flash-0731 |
+| harness-data-modeler | 300 | 500 | 800 | deepseek/deepseek-v4-flash-0731 |
+| harness-frontend-dev | 1,200 | 2,000 | 3,200 | deepseek/deepseek-v4-pro-0813 |
+| harness-backend-dev | 1,000 | 1,600 | 2,600 | deepseek/deepseek-v4-pro-0813 |
+| harness-tester | 400 | 700 | 1,100 | deepseek/deepseek-v4-flash-0731 |
+| harness-reviewer | 200 | 200 | 400 | deepseek/deepseek-v4-flash-0731 |
 | **Total** | **3,500** | **6,100** | **9,600** | — |
 
 ## Errors & Warnings

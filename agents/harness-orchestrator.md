@@ -1,7 +1,7 @@
 ---
 name: harness-orchestrator
 description: Main orchestrator agent — coordinates full pipeline from Teams/CLI input to Yunxiao deployment, with observability at every step
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.3
 ---
 

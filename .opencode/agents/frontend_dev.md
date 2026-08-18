@@ -1,7 +1,7 @@
 ---
 description: 根据 FSD、SSD 技术选型、原型和数据库 Schema 生成前端代码
 mode: subagent
-model: deepseek/deepseek-v4-pro
+model: deepseek/deepseek-v4-pro-0813
 temperature: 0.3
 permission:
   edit: allow
