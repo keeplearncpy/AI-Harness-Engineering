@@ -12,6 +12,7 @@ description: Iterate on an existing project — runs the local delta workflow (F
 
 同 `/harness-new`：优先探测 `harness-*`（全局安装），回退到项目内 `.opencode/agents` 名
 （`fsd_generator`、`prototype_generator`、`data_modeler`、`backend_dev`、`frontend_dev`、`tester`、`code-reviewer`）。
+可观测性用全局名 `harness-observability`。
 
 ## 增量流水线
 
@@ -38,12 +39,18 @@ description: Iterate on an existing project — runs the local delta workflow (F
 ### Step 6: 评审
 - 评审子代理：评审改动；严重问题要求修复
 
+### Step 7: 可观测性报告（每次会话必做，生成一次）
+- 调用可观测性子代理，附项目根目录绝对路径 + 本次会话 run_id（时间戳 `YYYYMMDD-HHMMSS`）
+- 产出 `docs/observability/` 下 summary/dashboard/execution 报告并更新 INDEX.md
+- 即使前面步骤失败也必须执行本步骤
+
 ## 硬性规则
 1. 不重复生成已有产物，只做增量；重构可修改现有文件
 2. 技术栈沿用 `fsd/SSD-SystemOverview.md`，不擅自更换
 3. 每个子代理任务必须给出绝对路径输入与输出
 4. 子代理返回空时重试一次；仍失败则停下向用户报告
-5. 完成后输出变更总览：改动的文档/代码文件清单、测试与评审结论
+5. 会话结束必须执行 Step 7 产出可观测性报告（每次会话一份）
+6. 完成后输出变更总览：改动的文档/代码文件清单、测试与评审结论、可观测性报告链接
 
 ## 参数
 

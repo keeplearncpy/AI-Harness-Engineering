@@ -166,6 +166,6 @@ class Settings:
 
 settings = Settings()
 
-# 确保数据目录存在
-for sub in ["logs", "dashboards", "states", "conversations"]:
+# 确保引擎内部状态目录存在（可观测性报告输出到项目 docs/observability/）
+for sub in ["states", "conversations"]:
     (Path(__file__).parent.parent / ".harness" / sub).mkdir(parents=True, exist_ok=True)

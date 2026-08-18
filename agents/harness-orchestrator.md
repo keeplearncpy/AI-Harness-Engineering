@@ -183,4 +183,4 @@ Each project maintains state at `{project_path}/.harness/state.json`:
 - CI/CD 审批默认通过飞书卡片按钮（批准/拒绝）；审批超时默认 24 小时后自动拒绝
 - Yunxiao deployment requires review phase to pass with no critical issues
 - State is saved after each phase to enable resume on failure
-- All agent invocations are logged to `.harness/logs/` for debugging
+- All agent invocations are reported to `docs/observability/`（每次会话一组：summary/dashboard/execution + INDEX）

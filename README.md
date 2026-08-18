@@ -200,9 +200,15 @@ Phase 6: CI/CD审批  ──→ 审批卡片（默认飞书消息审批，卡片
 
 ### 3. 全程可观测
 
-每个 phase 的执行日志 → `.harness/logs/execution-{run_id}.jsonl`
-每轮对话记录 → `.harness/conversations/{run_id}.json`
-Pipeline 仪表盘 → `.harness/dashboards/pipeline-{run_id}.md` (Mermaid 可视化)
+每次会话结束自动生成一组可观测性报告，输出到**所创建项目的 `docs/observability/`** 目录：
+
+- `summary-{run_id}.md` — 会话总结（阶段完成情况、产物统计、问题清单）
+- `dashboard-{run_id}.md` — 仪表盘（Mermaid 流程图 + 统计表）
+- `execution-{run_id}.jsonl` — 逐阶段执行记录（append-only）
+- `INDEX.md` — 所有会话报告的索引
+
+本地模式由 `/harness-new`、`/harness-iterate` 的最后一个阶段触发（扫描项目目录收集数据）；
+引擎模式作为 sidecar 自动执行。每次会话生成一份，互不覆盖。
 
 ### 4. CLI 直接触发 (不走 Teams)
 

@@ -22,6 +22,7 @@ description: Create a new full-stack project — runs the full local workflow (F
 | 前端开发 | `harness-frontend-dev` | `frontend_dev` |
 | 测试 | `harness-tester` | `tester` |
 | 代码评审 | `harness-reviewer` | `code-reviewer` |
+| 可观测性 | `harness-observability` | （无项目内版本，用全局名） |
 
 ## 流水线阶段（当前项目根目录下执行）
 
@@ -45,12 +46,18 @@ description: Create a new full-stack project — runs the full local workflow (F
 ### Phase 5: 评审
 - 评审子代理：输入全部生成代码，输出评审报告；有严重问题则要求修复后复评
 
+### Phase 6: 可观测性报告（每次会话必做，生成一次）
+- 调用可观测性子代理，任务描述包含：项目根目录绝对路径 + run_id（用本次会话时间戳 `YYYYMMDD-HHMMSS`）
+- 产出：`docs/observability/summary-{run_id}.md`、`dashboard-{run_id}.md`、`execution-{run_id}.jsonl`、更新 `INDEX.md`
+- 即使前面阶段失败也必须执行本阶段并产出报告
+
 ## 硬性规则
 1. 阶段顺序不可跳；并行阶段用同一条消息发起两个 Task
 2. 每个子代理任务必须给出**绝对路径**输入（FSD/schema/原型）与输出目录
 3. 技术栈唯一来源是 `fsd/SSD-SystemOverview.md` 的「技术选型」章节，不要自行改栈
 4. 子代理返回空/失败时，重试一次并带上更明确的路径；仍失败则停下来向用户报告
-5. 全部完成后输出总览：目录树、各阶段产物路径、接口/页面数量
+5. 会话结束必须执行 Phase 6 产出可观测性报告（每次会话一份）
+6. 全部完成后输出总览：目录树、各阶段产物路径、接口/页面数量、可观测性报告链接
 
 ## 参数
 

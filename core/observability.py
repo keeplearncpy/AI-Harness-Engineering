@@ -1,6 +1,8 @@
 """
 Harness Engine — 可观测性。
 跟踪 agent 执行指标、校验产出、生成仪表盘。
+
+输出位置：所创建项目的 docs/observability/ 目录（每次会话一组报告）。
 """
 
 import json
@@ -18,15 +20,14 @@ log = logging.getLogger("harness.observability")
 class Observability:
     """旁路可观测性：跟踪、校验、报告。"""
 
-    def __init__(self, base_dir: str = None):
-        if base_dir:
-            path = Path(base_dir)
+    def __init__(self, project_root: str = None):
+        if project_root:
+            path = Path(project_root)
         else:
-            path = Path(__file__).parent.parent / ".harness"
-        self._log_dir = path / "logs"
-        self._dash_dir = path / "dashboards"
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._dash_dir.mkdir(parents=True, exist_ok=True)
+            # 引擎模式下项目根目录 = 进程工作目录（fsd/、design/ 等产物所在处）
+            path = Path.cwd()
+        self._report_dir = path / "docs" / "observability"
+        self._report_dir.mkdir(parents=True, exist_ok=True)
 
         self._records: dict[str, list[AgentExecutionRecord]] = {}
 
@@ -42,7 +43,9 @@ class Observability:
         records = self._records.get(state.run_id, [])
         self._persist_log(state.run_id, records)
         self._generate_dashboard(state.run_id, state, records)
-        log.info(f"可观测性: 结束运行 {state.run_id}（{len(records)} 条记录）")
+        self._update_index(state.run_id, state)
+        log.info(f"可观测性: 结束运行 {state.run_id}（{len(records)} 条记录）"
+                 f" → docs/observability/")
 
     # ===============================================================
     # 阶段记录
@@ -77,7 +80,7 @@ class Observability:
     # ===============================================================
 
     def _persist_log(self, run_id: str, records: list[AgentExecutionRecord]):
-        filepath = self._log_dir / f"execution-{run_id}.jsonl"
+        filepath = self._report_dir / f"execution-{run_id}.jsonl"
         with open(filepath, "w", encoding="utf-8") as f:
             for r in records:
                 f.write(r.model_dump_json() + "\n")
@@ -116,9 +119,32 @@ class Observability:
         lines.append("```")
 
         dashboard = "\n".join(lines)
-        filepath = self._dash_dir / f"pipeline-{run_id}.md"
+        filepath = self._report_dir / f"dashboard-{run_id}.md"
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(dashboard)
+
+    def _update_index(self, run_id: str, state: PipelineState):
+        """追加/更新 docs/observability/INDEX.md 会话索引。"""
+        index_path = self._report_dir / "INDEX.md"
+        entry = (
+            f"| {run_id} | {state.project_name} | {state.status} | "
+            f"{state.started_at or ''} | "
+            f"[summary](summary-{run_id}.md) / [dashboard](dashboard-{run_id}.md) |"
+        )
+        header = (
+            "| Run ID | Project | Status | Started | Reports |\n"
+            "|--------|---------|--------|---------|---------|\n"
+        )
+        if index_path.exists():
+            lines = index_path.read_text(encoding="utf-8").splitlines()
+            lines = [l for l in lines if f"| {run_id} " not in l]
+            lines.append(entry)
+            index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            index_path.write_text(
+                "# Observability Index\n\n" + header + entry + "\n",
+                encoding="utf-8",
+            )
 
     # ===============================================================
     # 查询 API
@@ -144,7 +170,7 @@ class Observability:
         if state is None:
             return None
 
-        log_file = self._log_dir / f"execution-{run_id}.jsonl"
+        log_file = self._report_dir / f"execution-{run_id}.jsonl"
         records = []
         if log_file.exists():
             with open(log_file, "r", encoding="utf-8") as f:
@@ -159,7 +185,7 @@ class Observability:
         }
 
     async def get_dashboard(self, run_id: str) -> Optional[str]:
-        filepath = self._dash_dir / f"pipeline-{run_id}.md"
+        filepath = self._report_dir / f"dashboard-{run_id}.md"
         if not filepath.exists():
             return None
         return filepath.read_text(encoding="utf-8")
