@@ -41,8 +41,9 @@ The engine listens on `http://localhost:8000` for:
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │     Microsoft Teams + Power Automate     │
-                    │     POST /webhook/teams                  │
+                    │   聊天平台（飞书默认，可配 Teams 等）      │
+                    │   飞书: websocket/webhook → /webhook/lark  │
+                    │   Teams: Power Automate → /webhook/teams   │
                     └─────────────────┬───────────────────────┘
                                       │
     ┌─────────────────────────────────▼────────────────────────────┐
@@ -129,13 +130,14 @@ ai-harness-engineering/
 
 ## How It Actually Works
 
-### 1. Teams Chat → Clarification Loop
+### 1. 聊天平台对话 → Clarification Loop
 
 ```
-用户在 Teams 中发消息: "帮我做一个库存管理系统"
+用户在飞书（默认）/ Teams 中发消息: "帮我做一个库存管理系统"
     │
     ▼
-Power Automate → HTTP POST → Engine :8000/webhook/teams
+飞书: websocket 长连接 / webhook 事件订阅 → Engine
+Teams: Power Automate → HTTP POST → Engine :8000/webhook/teams
     │
     ▼
 Engine → OpenCode → yunxiao-agent (MCP)
@@ -145,7 +147,7 @@ Engine → OpenCode → yunxiao-agent (MCP)
     ├── 需求不清晰: "QUESTION: 需要管理哪些类型的库存？原材料、半成品还是成品？"
     │       │
     │       ▼
-    │   Teams 回复: "主要是成品库存管理"
+    │   聊天平台回复: "主要是成品库存管理"
     │       │
     │       ▼
     │   Engine → yunxiao-agent → 更新任务 → 继续追问
@@ -174,10 +176,11 @@ Phase 3: 代码生成   ──→ harness-frontend-dev | harness-backend-dev
                       （技术栈动态注入：project_context.tech_stack > SSD 技术选型 > 默认兜底）
 Phase 4: 测试       ──→ harness-tester → tests/
 Phase 5: 代码评审   ──→ harness-reviewer → reviews/
-Phase 6: CI/CD审批  ──→ Teams 审批卡片 → 人工审核
+Phase 6: CI/CD审批  ──→ 审批卡片（默认飞书消息审批，卡片按钮 批准/拒绝）
+                      NOTIFY_CHANNEL 可配置: feishu(默认) | teams | both | none
      │
      ├── ✅ 批准 → yunxiao-agent 触发 Flow 流水线 → 部署到 ACK
-     └── ❌ 拒绝 → 停止流水线, Teams 通知
+     └── ❌ 拒绝 → 停止流水线, 通知请求会话
 ```
 
 ### 3. 全程可观测
@@ -199,14 +202,19 @@ curl -X POST http://localhost:8000/pipeline/trigger \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Engine health + OpenCode connectivity |
+| `POST` | `/webhook/lark` | 飞书事件订阅（默认渠道，单应用） |
+| `POST` | `/webhook/lark/{app_name}` | 飞书事件订阅（多机器人） |
 | `POST` | `/webhook/teams` | Teams messages from Power Automate |
+| `POST` | `/webhook/approval` | 审批回调（Teams/Power Automate） |
 | `POST` | `/pipeline/trigger` | Programmatic pipeline trigger |
 | `GET` | `/pipeline/{run_id}/status` | Pipeline status |
 | `GET` | `/observability/runs` | Recent pipeline runs |
 | `GET` | `/observability/run/{run_id}` | Detailed run metrics |
 | `GET` | `/observability/dashboard/{run_id}` | Mermaid dashboard (Markdown) |
-| `POST` | `/webhook/approval` | Power Automate approval callback |
 | `POST` | `/yunxiao/webhook` | Yunxiao pipeline status callback |
+
+飞书 CI/CD 审批通过卡片按钮完成（card.action.trigger 事件），
+经 `/webhook/lark`（webhook 模式）或长连接（websocket 模式）回流。
 
 ## Tech Stack
 
@@ -219,7 +227,7 @@ curl -X POST http://localhost:8000/pipeline/trigger \
 | State | File-based JSON (`.harness/states/`) |
 | Observability | JSONL logs + Mermaid dashboards |
 | DevOps | Yunxiao 云效 (Codeup → Flow → AppStack → ACK) |
-| Communication | Microsoft Teams + Power Automate |
+| Communication | 飞书（默认）/ Teams / Power Automate，`NOTIFY_CHANNEL` 可配置 |
 
 ## Installation
 

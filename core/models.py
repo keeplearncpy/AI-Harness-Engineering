@@ -40,7 +40,7 @@ class ConversationContext(BaseModel):
     max_rounds: int = 10
     # 消息来源平台（"lark" | "teams" | ...），
     # 用于路由回复以及关联同一会话的后续消息
-    platform: str = "teams"
+    platform: str = "lark"
     platform_chat_id: str = ""
     # 处理该会话的 agent（多机器人时由应用配置决定）
     agent: str = "harness-yunxiao-agent"

@@ -32,6 +32,9 @@ async def lifespan(app: FastAPI):
     log.info(f"Harness Engine 启动于 {settings.host}:{settings.port}")
     await orchestrator.start()
 
+    # 绑定卡片按钮回调（飞书 CI/CD 审批）
+    message_router.bind_card_actions(orchestrator.handle_card_action)
+
     # 启动主动消息接入（如飞书长连接），多机器人时每个应用各一条连接
     _listener_tasks.extend(
         await message_router.start_listeners(orchestrator.handle_message)

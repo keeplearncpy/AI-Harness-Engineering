@@ -24,7 +24,7 @@ from core.models import (
     ClarificationRound,
 )
 from core.config import settings
-from core.teams_notifier import teams_notifier
+from core.notifier import notifier
 from core.messaging import UnifiedMessage
 
 log = logging.getLogger("harness.orchestrator")
@@ -350,27 +350,48 @@ Respond in Chinese. Be concise."""
         """需求确认后执行完整流水线。"""
         run_id = state.run_id
         try:
-            # ---- 阶段 1: FSD ----
+            # ---- 阶段 1: FSD（含技术选型，写入 fsd/）----
             await self._run_phase(state, 1, "requirements", self._agent("fsd"), f"""
 Generate a Functional Specification Document based on these confirmed requirements:
 
 {conv.confirmed_requirements}
 
-Generate structured FSD documents with user stories, acceptance criteria, data entities, and API endpoints. Output in Chinese.""",
-                "docs/SSD-SystemOverview.md")
+Requirements:
+1. Write the SSD to fsd/SSD-SystemOverview.md including a 技术选型 (tech stack) section
+   covering frontend, backend, database and middleware. Decide the stack from the request;
+   default: Frontend React 19 + Vite + TypeScript; Backend Java 21 + Spring Boot 3.x + Maven;
+   Database MySQL 8.
+2. Write feature FSDs under fsd/{{模块}}/feature-{{功能名}}-{{索引}}.md
+   and update fsd/INDEX.md.
+3. Include user stories, acceptance criteria, data entities, and API endpoints.
+Output in Chinese.""",
+                "fsd/SSD-SystemOverview.md")
 
-            # ---- 阶段 2: 数据建模 ----
+            # ---- 阶段 2a: 前端原型 ----
+            await self._run_phase(state, 2, "prototype", self._agent("prototype"),
+                "Generate the HTML wireframe prototype under prototype/ based on the FSD "
+                "pages/routes/menus/forms, including prototype/click-map.md. "
+                "No images, no AI aesthetics — plain HTML+CSS wireframes with real click navigation.",
+                "prototype/click-map.md")
+
+            # ---- 阶段 2b: 数据建模 ----
             await self._run_phase(state, 2, "data_modeling", self._agent("data_modeler"),
-                "Based on the FSD generated above, design the complete database schema. Generate DDL SQL, ER diagram (Mermaid), and data dictionary.",
+                "Based on the FSD and the SSD 技术选型 (tech stack), design the complete database "
+                "schema with DDL matching the chosen database dialect. "
+                "Generate DDL SQL, ER diagram (Mermaid), and data dictionary under design/.",
                 "design/db-schema.sql")
 
-            # ---- 阶段 3: 代码生成 ----
+            # ---- 阶段 3: 代码生成（技术栈来自 SSD，不写死）----
             await self._run_phase(state, 3, "generation", self._agent("backend_dev"),
-                "Generate FastAPI backend code based on the FSD and DB schema. Implement all API endpoints, services, models, and middleware.",
-                "src/backend/")
+                "Generate the backend code under backend/ following the tech stack specified in "
+                "fsd/SSD-SystemOverview.md 技术选型 section. "
+                "Implement all API endpoints, services, models, and middleware.",
+                "backend/")
             await self._run_phase(state, 3, "generation_fe", self._agent("frontend_dev"),
-                "Generate React + TypeScript frontend code based on the FSD and API design. Implement all pages, components, services, and routing.",
-                "src/frontend/")
+                "Generate the frontend code under frontend/ following the tech stack in "
+                "fsd/SSD-SystemOverview.md and the pages/routes in prototype/click-map.md. "
+                "Implement all pages, components, services, and routing.",
+                "frontend/")
 
             # ---- 阶段 4: 测试 ----
             await self._run_phase(state, 4, "testing", self._agent("tester"),
@@ -382,17 +403,17 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
                 "Review ALL generated code for quality, security vulnerabilities (OWASP Top 10), performance issues, and best practices. Generate a structured review report.",
                 "reviews/")
 
-            # ---- 阶段 6: CI/CD 审批 ----
+            # ---- 阶段 6: CI/CD 审批（渠道由 NOTIFY_CHANNEL 决定，默认飞书）----
             conv.state = ConversationState.WAITING_APPROVAL
             state.status = "waiting_approval"
             state.current_phase = 6
             state_manager.save(state)
             self._save_conversation(conv)
 
-            # 发送 Teams 审批卡片
-            await teams_notifier.send_approval_card(state, conv)
+            # 发送审批卡片（飞书卡片按钮 / Teams 审批卡片）
+            await notifier.send_approval_card(state, conv)
 
-            log.info(f"[{run_id}] 等待 CI/CD 人工审批...")
+            log.info(f"[{run_id}] 等待 CI/CD 人工审批（渠道: {settings.notify_channel}）...")
 
         except Exception as e:
             log.error(f"[{run_id}] 流水线失败: {e}")
@@ -400,17 +421,18 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
             state.error_message = str(e)
             state_manager.save(state)
             await observability.end_run(state)
-            await teams_notifier.send_error(run_id, str(e), conv.teams_channel_id)
+            await notifier.send_error(run_id, str(e), self._conv_chat_id(conv))
 
     # ===============================================================
     # 审批与部署
     # ===============================================================
 
     async def handle_approval(self, body: dict):
-        """处理来自 Teams/Power Automate 的 CI/CD 人工审批。"""
+        """处理 CI/CD 人工审批（飞书卡片按钮 / Teams / Power Automate）。"""
         run_id = body.get("run_id")
         approved = body.get("approved", False)
         comments = body.get("comments", "")
+        chat_id = body.get("chat_id", "")
 
         state = state_manager.get(run_id)
         if state is None:
@@ -437,7 +459,7 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
             self._save_conversation(conv)
             await observability.end_run(state)
 
-            await teams_notifier.send_completion(state, conv)
+            await notifier.send_completion(state, conv, chat_id=chat_id)
 
         else:
             log.info(f"[{run_id}] CI/CD 已拒绝: {comments}")
@@ -445,7 +467,23 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
             state_manager.save(state)
             conv.state = ConversationState.FAILED
             self._save_conversation(conv)
-            await teams_notifier.send_rejection(state, conv, comments)
+            await notifier.send_rejection(state, conv, comments, chat_id=chat_id)
+
+    async def handle_card_action(self, value: dict):
+        """处理飞书卡片按钮回调（card.action.trigger 的 value）。"""
+        run_id = value.get("run_id", "")
+        if not run_id:
+            log.warning("卡片动作缺少 run_id，忽略")
+            return
+        body = {
+            "run_id": run_id,
+            "approved": bool(value.get("approved", False)),
+            "comments": value.get("comments", ""),
+            "user": value.get("user", ""),
+            "chat_id": value.get("chat_id", ""),
+        }
+        log.info(f"卡片审批动作: run={run_id} approved={body['approved']}")
+        await self.handle_approval(body)
 
     # ===============================================================
     # 编程接口（CLI 触发）
@@ -468,7 +506,7 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
             project_name=options.get("project", f"project-{run_id}"),
             workflow="new_project",
             current_phase=1,
-            total_phases=6,
+            total_phases=7,
             status="running",
             session_id=await opencode_client.create_session(f"CLI-{run_id}"),
             started_at=datetime.now(timezone.utc).isoformat(),
@@ -510,9 +548,14 @@ Generate structured FSD documents with user stories, acceptance criteria, data e
 
         await observability.record_phase(state.run_id, agent, phase_name, "success", {"summary": result_text})
 
-        # 通知 Teams
-        if state.conversation and state.conversation.teams_channel_id:
-            await teams_notifier.send_phase_update(state, phase_name, agent)
+        # 通知聊天平台（渠道由 NOTIFY_CHANNEL 决定，默认飞书）
+        await notifier.send_phase_update(state, phase_name, agent)
+
+    @staticmethod
+    def _conv_chat_id(conv: ConversationContext) -> str:
+        if conv is None:
+            return ""
+        return conv.platform_chat_id or conv.teams_channel_id or ""
 
     def _extract_text(self, result: dict) -> str:
         try:

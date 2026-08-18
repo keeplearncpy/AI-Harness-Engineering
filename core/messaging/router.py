@@ -71,6 +71,11 @@ class MessageRouter:
         for adapter in self.adapters():
             adapter.on_message = on_message
 
+    def bind_card_actions(self, on_card_action):
+        """把卡片按钮回调（审批等）绑定到所有适配器。"""
+        for adapter in self.adapters():
+            adapter.on_card_action = on_card_action
+
     # -------------------------------------------------------------
     # webhook 入口（事件订阅模式）
     # -------------------------------------------------------------

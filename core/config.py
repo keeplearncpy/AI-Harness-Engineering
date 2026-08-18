@@ -41,6 +41,21 @@ class Settings:
     teams_app_id: str = os.getenv("TEAMS_APP_ID", "")
 
     # -----------------------------------------------------------
+    # 出站通知渠道（Phase 6 CI/CD 审批等所有出站通知）
+    #
+    # NOTIFY_CHANNEL 可选值（逗号分隔可多选）：
+    #   feishu — 飞书消息审批（默认，卡片按钮 approve/reject）
+    #   teams  — Microsoft Teams（incoming webhook + Power Automate）
+    #   both   — 同时发送到已配置的所有渠道
+    #   none   — 关闭出站通知（仅日志）
+    # -----------------------------------------------------------
+    notify_channel: str = os.getenv("NOTIFY_CHANNEL", "feishu")
+
+    # 用于发送通知的飞书应用名（LARK_APPS_JSON 中 name 字段）；
+    # 为空时取第一个已配置的飞书应用
+    lark_notify_app: str = os.getenv("LARK_NOTIFY_APP", "")
+
+    # -----------------------------------------------------------
     # Power Automate
     # -----------------------------------------------------------
     power_automate_flow_approval: str = os.getenv("POWER_AUTOMATE_FLOW_APPROVAL", "")
@@ -75,7 +90,7 @@ class Settings:
     # -----------------------------------------------------------
     # 默认值
     # -----------------------------------------------------------
-    default_model: str = os.getenv("HARNESS_MODEL", "qwen3.7-max")
+    default_model: str = os.getenv("HARNESS_MODEL", "deepseek/deepseek-v4-pro")
     max_clarification_rounds: int = int(os.getenv("HARNESS_MAX_CLARIFY", "10"))
 
     # agent 角色 → 实际 agent 名 的映射（JSON），
@@ -127,6 +142,7 @@ class Settings:
             "chat": "build",                # 闲聊/问答（主 agent，回复质量最高）
             "clarify": "general",           # 澄清 / 云效任务（原 harness-yunxiao-agent）
             "fsd": "fsd_generator",         # 功能规格文档（原 harness-fsd）
+            "prototype": "prototype_generator",  # HTML 线框原型
             "data_modeler": "data_modeler",
             "backend_dev": "backend_dev",
             "frontend_dev": "frontend_dev",
@@ -141,6 +157,11 @@ class Settings:
             except Exception as e:
                 logging.getLogger("harness.config").error(f"HARNESS_AGENT_MAP 解析失败: {e}")
         return default_map
+
+    @property
+    def notify_channels(self) -> list[str]:
+        """解析 NOTIFY_CHANNEL 为渠道列表（小写、去重）。"""
+        return [c.strip().lower() for c in self.notify_channel.split(",") if c.strip()]
 
 
 settings = Settings()

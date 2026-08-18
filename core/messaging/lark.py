@@ -42,6 +42,8 @@ log = logging.getLogger("harness.messaging.lark")
 # 接收消息事件类型
 EVENT_MESSAGE_RECEIVE = "im.message.receive_v1"
 EVENT_URL_VERIFICATION = "url_verification"
+# 卡片按钮点击事件（用于 CI/CD 审批卡片）
+EVENT_CARD_ACTION = "card.action.trigger"
 
 # 长连接接入点发现接口（当前网关协议）。
 # 返回的 URL 自带认证信息；connect 帧使用 tenant_access_token。
@@ -185,6 +187,7 @@ class LarkAdapter(PlatformAdapter):
         super().__init__(on_message)
         self.name = name                      # 应用名（多机器人区分）
         self.agent = agent                    # 该机器人绑定的处理 agent
+        self.on_card_action = None            # 卡片按钮回调（审批等）
         self._app_id = app_id or settings.lark_app_id
         self._app_secret = app_secret or settings.lark_app_secret
         self._verification_token = verification_token or settings.lark_verification_token
@@ -260,8 +263,11 @@ class LarkAdapter(PlatformAdapter):
                 return WebhookResult(status="error", status_code=401,
                                      body={"code": 401, "msg": "invalid token"})
 
-        # --- 只处理消息事件 ---
+        # --- 只处理消息事件与卡片动作事件 ---
         event_type = body.get("header", {}).get("event_type", "")
+        if event_type == EVENT_CARD_ACTION:
+            self._handle_card_action_event(body.get("event", {}))
+            return WebhookResult(status="ok", body={"code": 0})
         if event_type != EVENT_MESSAGE_RECEIVE:
             return WebhookResult(status="ignored", body={"code": 0})
 
@@ -354,6 +360,28 @@ class LarkAdapter(PlatformAdapter):
         return "\n".join(parts).strip()
 
     # =============================================================
+    # 卡片动作事件（CI/CD 审批等）
+    # =============================================================
+
+    def _handle_card_action_event(self, event: dict):
+        """
+        card.action.trigger 事件：提取按钮 value 交给 on_card_action 回调。
+
+        value 由发卡片方决定，约定为 dict（如 {"run_id":..., "approved": true}）。
+        """
+        action = event.get("action", {}) or {}
+        value = action.get("value", {}) or {}
+        if isinstance(value, str):
+            value = self._parse_json(value)
+        if not isinstance(value, dict) or not value:
+            log.debug(f"[lark:{self.name}] 卡片动作无有效 value，忽略")
+            return
+        if self.on_card_action:
+            asyncio.create_task(self.on_card_action(value))
+        else:
+            log.warning(f"[lark:{self.name}] 收到卡片动作但未绑定 on_card_action")
+
+    # =============================================================
     # 回复 — 走开放平台 API
     # =============================================================
 
@@ -368,6 +396,36 @@ class LarkAdapter(PlatformAdapter):
             log.warning(f"[lark:{self.name}] 卡片发送失败，降级为流式文本")
         # 纯文本 → 流式输出（打字机效果）
         return await self._send_stream_text_reply(msg, text)
+
+    # =============================================================
+    # 出站通知 — 主动向会话发消息（无需被回复的消息）
+    # =============================================================
+
+    async def send_message(self, chat_id: str, msg_type: str, content: str) -> bool:
+        """主动向会话发送消息（用于出站通知 / 审批卡片）。"""
+        if not chat_id or not self.is_configured():
+            return False
+        try:
+            token = await self._get_tenant_access_token()
+            r = await self._client.post(
+                f"{settings.lark_domain}/open-apis/im/v1/messages",
+                params={"receive_id_type": "chat_id"},
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json; charset=utf-8"},
+                json={"receive_id": chat_id, "msg_type": msg_type, "content": content},
+            )
+            data = r.json()
+            if data.get("code") != 0:
+                log.error(f"[lark:{self.name}] 主动发送失败: {data}")
+                return False
+            return True
+        except Exception as e:
+            log.error(f"[lark:{self.name}] 主动发送异常: {e}")
+            return False
+
+    async def send_markdown(self, chat_id: str, text: str) -> bool:
+        """以 markdown 卡片向会话发送文本（出站通知）。"""
+        return await self.send_message(chat_id, "interactive", self._markdown_card(text))
 
     async def _reply_api(self, msg: UnifiedMessage, payload: dict) -> Optional[dict]:
         """调用 reply 接口，返回响应体（失败返回 None）。"""
@@ -632,10 +690,13 @@ class LarkAdapter(PlatformAdapter):
         elif ftype == "event":
             # 旧网关的 JSON 事件帧（兼容保留）
             data = frame.get("data", {}) or {}
-            if data.get("header", {}).get("event_type") == EVENT_MESSAGE_RECEIVE:
+            event_type = data.get("header", {}).get("event_type", "")
+            if event_type == EVENT_MESSAGE_RECEIVE:
                 msg = self._parse_message_event(data.get("event", {}))
                 if msg is not None and self.on_message:
                     asyncio.create_task(self._process(msg))
+            elif event_type == EVENT_CARD_ACTION:
+                self._handle_card_action_event(data.get("event", {}))
         elif ftype == "disconnect":
             log.warning(f"[lark:{self.name}] 服务端要求断开: {frame.get('reason')}")
             return True
@@ -679,10 +740,13 @@ class LarkAdapter(PlatformAdapter):
             return False
 
         data = json.loads(payload.decode("utf-8", "replace"))
-        if data.get("header", {}).get("event_type") == EVENT_MESSAGE_RECEIVE:
+        event_type = data.get("header", {}).get("event_type", "")
+        if event_type == EVENT_MESSAGE_RECEIVE:
             msg = self._parse_message_event(data.get("event", {}))
             if msg is not None and self.on_message:
                 asyncio.create_task(self._process(msg))
+        elif event_type == EVENT_CARD_ACTION:
+            self._handle_card_action_event(data.get("event", {}))
         return False
 
     # =============================================================

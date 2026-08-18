@@ -65,6 +65,7 @@ class TeamsNotifier:
     # ===============================================================
 
     async def send_approval_card(self, state: PipelineState, conv: ConversationContext):
+        approval_url = f"http://{settings.host}:{settings.port}/webhook/approval"
         await self._send({
             "@type": "MessageCard",
             "@context": "https://schema.org/extensions",
@@ -82,7 +83,7 @@ class TeamsNotifier:
                 {
                     "@type": "HttpPOST",
                     "name": "Approve & Deploy",
-                    "target": f"{{settings.host}}:{{settings.port}}/webhook/approval",
+                    "target": approval_url,
                     "body": json.dumps({
                         "run_id": state.run_id,
                         "approved": True,
@@ -92,7 +93,7 @@ class TeamsNotifier:
                 {
                     "@type": "HttpPOST",
                     "name": "Reject",
-                    "target": f"{{settings.host}}:{{settings.port}}/webhook/approval",
+                    "target": approval_url,
                     "body": json.dumps({
                         "run_id": state.run_id,
                         "approved": False,
