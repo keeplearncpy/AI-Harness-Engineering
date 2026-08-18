@@ -27,6 +27,8 @@ import hashlib
 import hmac
 import json
 import logging
+import math
+import re
 import time
 from typing import Optional
 
@@ -48,6 +50,11 @@ WS_ENDPOINT_PATH = "/callback/ws/endpoint"
 PING_INTERVAL = 45        # 默认心跳间隔，会被接入点返回的 ClientConfig 覆盖
 RECONNECT_DELAY = 5       # 断线重连间隔（秒）
 TOKEN_EXPIRE_MARGIN = 60  # token 提前多少秒刷新
+
+# 流式回复参数（通过 PATCH 分段更新消息，模拟打字机效果）
+STREAM_CHUNK_SIZE = 20     # 每次追加的最小字符数
+STREAM_INTERVAL = 0.2      # 追加间隔（秒）
+STREAM_MAX_UPDATES = 30    # 最多更新次数（长文本自动放大块大小）
 
 
 # =============================================================
@@ -353,23 +360,183 @@ class LarkAdapter(PlatformAdapter):
     async def send_reply(self, msg: UnifiedMessage, text: str) -> bool:
         if not msg.message_id:
             return False
+        # 含 Markdown 表格 → 卡片表格渲染（一次发送）
+        if self._contains_markdown_table(text):
+            ok = await self._send_card_reply(msg, text)
+            if ok:
+                return True
+            log.warning(f"[lark:{self.name}] 卡片发送失败，降级为流式文本")
+        # 纯文本 → 流式输出（打字机效果）
+        return await self._send_stream_text_reply(msg, text)
+
+    async def _reply_api(self, msg: UnifiedMessage, payload: dict) -> Optional[dict]:
+        """调用 reply 接口，返回响应体（失败返回 None）。"""
         try:
             token = await self._get_tenant_access_token()
             r = await self._client.post(
                 f"{settings.lark_domain}/open-apis/im/v1/messages/{msg.message_id}/reply",
                 headers={"Authorization": f"Bearer {token}",
                          "Content-Type": "application/json; charset=utf-8"},
-                json={"msg_type": "text",
-                      "content": json.dumps({"text": text})},
+                json=payload,
             )
             data = r.json()
             if data.get("code") != 0:
                 log.error(f"[lark:{self.name}] 回复失败: {data}")
-                return False
-            return True
+                return None
+            return data
         except Exception as e:
             log.error(f"[lark:{self.name}] 回复异常: {e}")
+            return None
+
+    async def _send_stream_text_reply(self, msg: UnifiedMessage, text: str) -> bool:
+        """
+        流式文本回复：先发占位卡片，再通过 PATCH 分段更新 markdown 内容。
+        注意：飞书的编辑消息接口只支持卡片消息，
+        因此占位与更新均使用 interactive 卡片 + markdown 元素。
+        需要应用开通权限：im:message:update（更新应用自己发送的消息）。
+        """
+        placeholder = self._markdown_card("...")
+        data = await self._reply_api(msg, {
+            "msg_type": "interactive",
+            "content": placeholder,
+        })
+        if not data:
             return False
+        message_id = (data.get("data") or {}).get("message_id", "")
+        if not message_id:
+            return False
+
+        # 计算块大小：长文本减少更新次数
+        total = len(text)
+        chunk_size = max(STREAM_CHUNK_SIZE, math.ceil(total / STREAM_MAX_UPDATES))
+        try:
+            token = await self._get_tenant_access_token()
+            sent = ""
+            for i in range(0, total, chunk_size):
+                sent = text[:i + chunk_size]
+                r = await self._client.patch(
+                    f"{settings.lark_domain}/open-apis/im/v1/messages/{message_id}",
+                    headers={"Authorization": f"Bearer {token}",
+                             "Content-Type": "application/json; charset=utf-8"},
+                    json={"content": self._markdown_card(sent)},
+                )
+                if r.json().get("code") != 0:
+                    raise RuntimeError(f"流式更新失败: {r.json()}")
+                await asyncio.sleep(STREAM_INTERVAL)
+            return True
+        except Exception as e:
+            log.error(f"[lark:{self.name}] 流式更新异常: {e}")
+            # 兜底：一次性把完整文本更新到占位卡片
+            try:
+                token = await self._get_tenant_access_token()
+                r = await self._client.patch(
+                    f"{settings.lark_domain}/open-apis/im/v1/messages/{message_id}",
+                    headers={"Authorization": f"Bearer {token}",
+                             "Content-Type": "application/json; charset=utf-8"},
+                    json={"content": self._markdown_card(text)},
+                )
+                if r.json().get("code") == 0:
+                    return True
+            except Exception:
+                pass
+            # 仍失败则补发一条完整回复
+            await self._reply_api(msg, {
+                "msg_type": "interactive",
+                "content": self._markdown_card(text),
+            })
+            return False
+
+    @staticmethod
+    def _markdown_card(text: str) -> str:
+        """构造单 markdown 元素的卡片 JSON 字符串。"""
+        card = {
+            "config": {"wide_screen_mode": True},
+            "elements": [{"tag": "markdown", "content": text}],
+        }
+        return json.dumps(card, ensure_ascii=False)
+
+    async def _send_card_reply(self, msg: UnifiedMessage, text: str) -> bool:
+        """含表格的回复以 interactive 卡片发送（markdown + table 元素）。"""
+        card = self._build_table_card(text)
+        data = await self._reply_api(msg, {
+            "msg_type": "interactive",
+            "content": json.dumps(card, ensure_ascii=False),
+        })
+        return bool(data)
+
+    # -------------------------------------------------------------
+    # Markdown 表格检测与卡片构建
+    # -------------------------------------------------------------
+
+    @staticmethod
+    def _contains_markdown_table(text: str) -> bool:
+        lines = text.splitlines()
+        for i in range(1, len(lines)):
+            if LarkAdapter._is_table_separator(lines[i]) and "|" in lines[i - 1]:
+                return True
+        return False
+
+    @staticmethod
+    def _is_table_separator(line: str) -> bool:
+        return bool(re.match(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", line)) and "-" in line
+
+    def _build_table_card(self, text: str) -> dict:
+        """把 Markdown（含表格）转成飞书卡片结构。"""
+        lines = text.splitlines()
+        elements = []
+        text_buf: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # 表格：上一行是表头，当前行是分隔行
+            if (i > 0 and self._is_table_separator(line)
+                    and "|" in lines[i - 1]):
+                if text_buf and text_buf[-1] == lines[i - 1]:
+                    text_buf.pop()
+                # 收集表格数据行
+                header_line = lines[i - 1]
+                rows: list[str] = []
+                i += 1
+                while i < len(lines) and "|" in lines[i]:
+                    rows.append(lines[i])
+                    i += 1
+                # 刷新普通文本块
+                if text_buf:
+                    elements.append({"tag": "markdown",
+                                     "content": "\n".join(text_buf).strip()})
+                    text_buf = []
+                elements.append(self._build_table_element(header_line, rows))
+                continue
+            text_buf.append(line)
+            i += 1
+
+        if text_buf:
+            elements.append({"tag": "markdown",
+                             "content": "\n".join(text_buf).strip()})
+
+        return {"config": {"wide_screen_mode": True}, "elements": elements}
+
+    @staticmethod
+    def _table_cells(line: str) -> list[str]:
+        return [c.strip() for c in line.strip().strip("|").split("|")]
+
+    def _build_table_element(self, header_line: str, rows: list[str]) -> dict:
+        header = self._table_cells(header_line)
+        row_cells = [self._table_cells(r) for r in rows]
+        width = max([len(header)] + [len(r) for r in row_cells])
+
+        def norm(cells: list[str]) -> list[str]:
+            return cells + [""] * (width - len(cells))
+
+        def to_cells(cells: list[str]) -> list[dict]:
+            return [{"data": {"tag": "plain_text", "content": c}}
+                    for c in norm(cells)]
+
+        return {
+            "tag": "table",
+            "header": {"cells": to_cells(header)},
+            "rows": [{"cells": to_cells(r)} for r in row_cells],
+        }
 
     # =============================================================
     # listener 模式 — 长连接（WebSocket）

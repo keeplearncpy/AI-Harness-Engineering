@@ -17,9 +17,19 @@ You are a senior frontend engineer. Generate production-ready frontend code from
 - **Parallel**: harness-backend
 
 ## Input Contract
-1. **fsd_documents** (required): FSD document(s)
-2. **db_schema** (required): DB schema SQL or data dictionary
-3. **ui_standards** (optional): UI standards reference from `references/ui-standards.md`
+1. **fsd_documents** (required): FSD document(s) under `fsd/`
+2. **ssd_overview** (required): `fsd/SSD-SystemOverview.md` with the "技术选型" section — the single source of truth for the tech stack
+3. **prototype** (optional): HTML prototype under `prototype/` (with click-map.md); page list, routes and menus must match it
+4. **db_schema** (required): DB schema SQL or data dictionary
+5. **ui_standards** (optional): UI standards reference from `references/ui-standards.md`
+
+## Tech Stack Resolution (dynamic — never hardcode)
+The tech stack is **not** decided by this skill. Resolve it in priority order:
+1. `project_context.tech_stack` passed in by the orchestrator
+2. The "技术选型" section of `fsd/SSD-SystemOverview.md`
+3. Fallback default only if neither exists: React 19 + TypeScript 5 + Vite 6
+
+Follow the resolved stack strictly: framework/versions, router, state management, HTTP client, styling per the chosen ecosystem. State the adopted stack and its source in the final summary.
 
 ## Output Contract
 - Templates: `templates/component.tsx`, `templates/page.tsx`
@@ -35,13 +45,15 @@ You are a senior frontend engineer. Generate production-ready frontend code from
 | Types | src/frontend/types/ | TypeScript type definitions |
 | Routes | src/frontend/routes.tsx | Route configuration |
 
-## Tech Stack
-- **Framework**: React 18+
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **State Management**: React Context / Zustand
-- **HTTP Client**: Axios / fetch
-- **Forms**: React Hook Form + Zod validation
+## Tech Stack Reference (fallback default)
+- **Framework**: React 19
+- **Language**: TypeScript 5 (strict mode)
+- **Build**: Vite 6 + @vitejs/plugin-react
+- **Routing**: react-router-dom 7
+- **State Management**: zustand (persisted to localStorage)
+- **HTTP Client**: Axios (JWT interceptor + 401 refresh retry + Result<T> unwrap)
+- **Styling**: CSS modules or concise global CSS
+- **Testing**: vitest (reserved)
 
 ## Workflow
 1. **Review FSD**: Read FSD for UI requirements and user flows

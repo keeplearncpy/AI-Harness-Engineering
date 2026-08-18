@@ -19,17 +19,19 @@ Start a new project from scratch. Provide a product idea or requirements descrip
 │  Phase 1: Requirements Analysis                              │
 │  Agent: harness-fsd                                          │
 │  Input:  User's product description                          │
-│  Output: FSD documents + SSD overview                        │
+│  Output: fsd/SSD-SystemOverview.md (含技术选型章节)          │
+│          + fsd/{模块}/feature-*.md                           │
 ├──────────────────────────────────────────────────────────────┤
-│  Phase 2: Data Modeling                                      │
-│  Agent: harness-data-modeler                                 │
-│  Input:  FSD documents                                       │
-│  Output: DB schema (DDL) + ER diagram + Data dictionary      │
+│  Phase 2: Prototype + Data Modeling (Parallel)               │
+│  Agent: harness-prototype | harness-data-modeler             │
+│  Input:  FSD documents + tech stack (from SSD)               │
+│  Output: prototype/ HTML 线框 + click-map.md                 │
+│          design/db-schema.sql + ER diagram + Data dictionary │
 ├──────────────────────────────────────────────────────────────┤
 │  Phase 3: Code Generation (Parallel)                         │
 │  Agent: harness-frontend-dev + harness-backend-dev           │
-│  Input:  FSD + DB schema                                     │
-│  Output: Frontend (React/TS) + Backend (FastAPI/Python)      │
+│  Input:  FSD + prototype + DB schema + tech stack (from SSD) │
+│  Output: Frontend + Backend（技术栈以 SSD 技术选型为准）     │
 ├──────────────────────────────────────────────────────────────┤
 │  Phase 4: Testing                                            │
 │  Agent: harness-tester                                       │
@@ -53,7 +55,8 @@ Start a new project from scratch. Provide a product idea or requirements descrip
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | project_description | Yes | Natural language description of the product |
-| --tech-frontend | No | Frontend framework (default: react) |
-| --tech-backend | No | Backend framework (default: fastapi) |
-| --tech-database | No | Database (default: postgresql) |
+| --tech-frontend | No | Frontend framework (default: react 19 + vite) |
+| --tech-backend | No | Backend framework (default: java 21 + spring boot 3.x) |
+| --tech-database | No | Database (default: mysql 8) |
+| --with-prototype | No | Generate HTML prototype (default: true) |
 | --output | No | Output directory (default: ./workspace/{project_name}) |

@@ -2,7 +2,7 @@
 name: harness-yunxiao-agent
 description: Yunxiao cloud DevOps agent via OpenCode MCP — creates tasks, manages requirements, triggers CI/CD with manual approval
 mode: subagent
-model: qwen3.7-max
+model: deepseek-v4-flash-0731
 temperature: 0.2
 permission:
   edit: allow

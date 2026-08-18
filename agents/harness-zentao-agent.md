@@ -2,7 +2,7 @@
 name: harness-zentao-agent
 description: Zentao PMS integration — manage tasks, bugs, user stories, and project milestones
 mode: subagent
-model: qwen3.7-max
+model: deepseek-v4-flash-0731
 temperature: 0.2
 ---
 

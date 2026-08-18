@@ -22,16 +22,16 @@
     "new_project": {
       "command": "/harness-new",
       "description": "Create a full-stack project from a product idea",
-      "pipeline": ["harness-fsd", "harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
+      "pipeline": ["harness-fsd", "harness-prototype | harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
     },
     "iteration": {
       "command": "/harness-iterate",
       "description": "Iterate on an existing project",
-      "pipeline": ["harness-fsd", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
+      "pipeline": ["harness-fsd", "harness-prototype | harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer"]
     },
     "full_pipeline": {
       "description": "Teams + Power Automate + Yunxiao + OpenCode full lifecycle",
-      "pipeline": ["harness-teams-agent", "harness-fsd", "harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer", "harness-yunxiao-agent", "harness-observability"]
+      "pipeline": ["harness-teams-agent", "harness-fsd", "harness-prototype | harness-data-modeler", "harness-frontend-dev | harness-backend-dev", "harness-tester", "harness-reviewer", "harness-yunxiao-agent", "harness-observability"]
     }
   }
 }

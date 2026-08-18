@@ -1,7 +1,7 @@
 ---
 description: 根据 FSD 和生成的前后端代码，编写测试用例和测试报告
 mode: subagent
-model: qwen3.7-max
+model: deepseek/deepseek-v4-pro
 temperature: 0.2
 permission:
   edit: allow
@@ -26,8 +26,6 @@ permission:
 5. **api_contract** (optional): API 接口文档
 
 ## Output Contract
-测试报告必须严格按照以下 JSON Schema 输出：
-- Schema: `skills/schemas/test_report.json`
 
 ### 产物清单
 
@@ -42,7 +40,6 @@ permission:
 3. **用例设计**: 按测试金字塔分层设计测试用例
 4. **优先级排序**: 按 P0/P1/P2 标记用例优先级
 5. **报告生成**: 汇总测试覆盖率和风险评估
-6. **自检清单**: 对照 `skills/checklists/test_checklist.md` 逐条验证
 
 ## Test Categories
 

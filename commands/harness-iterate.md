@@ -22,8 +22,13 @@ Add features, fix bugs, or refactor code in an existing project. The pipeline lo
 │  Step 2: Intent Parsing                                      │
 │  Determine change type: feature_add | bug_fix | refactor     │
 ├──────────────────────────────────────────────────────────────┤
-│  Step 3: Requirements Update (if new feature)                │
+│  Step 3: Requirements Update (if new feature / bug fix)      │
 │  Agent: harness-fsd → Delta FSD                              │
+│  新功能: fsd/{模块}/feature-{功能名称}-{索引}.md             │
+│  Bug修复: fsd/{模块}/fix-bug-{修复名称}-{索引}.md            │
+├──────────────────────────────────────────────────────────────┤
+│  Step 3b: Prototype Update (if page structure changed)       │
+│  Agent: harness-prototype → Update prototype/ + click-map.md │
 ├──────────────────────────────────────────────────────────────┤
 │  Step 4: Code Changes (Parallel if both frontend+backend)    │
 │  Agent: harness-frontend-dev + harness-backend-dev           │

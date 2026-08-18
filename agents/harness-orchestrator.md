@@ -1,8 +1,7 @@
 ---
 name: harness-orchestrator
 description: Main orchestrator agent — coordinates full pipeline from Teams/CLI input to Yunxiao deployment, with observability at every step
-mode: agent
-model: deepseek-v4-pro
+model: deepseek/deepseek-v4-pro
 temperature: 0.3
 ---
 
@@ -51,7 +50,7 @@ You are the **Harness Orchestrator**, the central agent of AI Harness Engineerin
 │ └────┬─────┘   └──────────┘   └────────────────┘              │
 │      │                                                         │
 │      │  Phase 1: harness-fsd                                   │
-│      │  Phase 2: harness-data-modeler                          │
+│      │  Phase 2: harness-prototype | harness-data-modeler      │
 │      │  Phase 3: harness-frontend-dev | harness-backend-dev    │
 │      │  Phase 4: harness-tester                                │
 │      │  Phase 5: harness-reviewer                              │
@@ -68,10 +67,11 @@ You are the **Harness Orchestrator**, the central agent of AI Harness Engineerin
 | # | Phase | Agent | Input | Output |
 |---|-------|-------|-------|--------|
 | 0 | Entry | harness-teams-agent | Teams message / CLI command | Parsed intent |
-| 1 | Requirements | harness-fsd | Raw requirements | FSD documents |
-| 2 | Data Modeling | harness-data-modeler | FSD documents | DB schema + ER diagram |
-| 3a | Frontend Code | harness-frontend-dev | FSD + DB schema | React/TypeScript source |
-| 3b | Backend Code | harness-backend-dev | FSD + DB schema | FastAPI/Python source |
+| 1 | Requirements | harness-fsd | Raw requirements | FSD documents (`fsd/`) |
+| 2a | Prototype | harness-prototype | FSD documents | HTML wireframes + click-map (`prototype/`) |
+| 2b | Data Modeling | harness-data-modeler | FSD + tech stack (from SSD) | DB schema + ER diagram (`design/`) |
+| 3a | Frontend Code | harness-frontend-dev | FSD + prototype + DB schema + tech stack | Frontend source |
+| 3b | Backend Code | harness-backend-dev | FSD + DB schema + tech stack | Backend source |
 | 4 | Testing | harness-tester | Source code + FSD | Test cases + report |
 | 5 | Review | harness-reviewer | All generated code | Review report |
 | 6 | Deploy | harness-yunxiao-agent | Approved code | Deployed application |
@@ -95,12 +95,18 @@ while True:
         fsd = await run_agent("harness-fsd", intent.raw_requirement)
         await teams.notify_phase_complete("FSD", fsd)
 
-        schema = await run_agent("harness-data-modeler", fsd)
-        await teams.notify_phase_complete("Data Model", schema)
+        # Tech stack single source of truth: extracted from the SSD "技术选型" section
+        tech_stack = extract_tech_stack(fsd)  # {frontend, backend, database, middleware}
+
+        prototype, schema = await run_parallel(
+            ("harness-prototype", fsd),
+            ("harness-data-modeler", fsd, {"tech_stack": tech_stack})
+        )
+        await teams.notify_phase_complete("Prototype + Data Model", prototype, schema)
 
         frontend, backend = await run_parallel(
-            ("harness-frontend-dev", fsd, schema),
-            ("harness-backend-dev", fsd, schema)
+            ("harness-frontend-dev", fsd, prototype, schema, {"tech_stack": tech_stack}),
+            ("harness-backend-dev", fsd, schema, {"tech_stack": tech_stack})
         )
         await teams.notify_phase_complete("Code Generation", frontend, backend)
 
@@ -138,8 +144,15 @@ Each project maintains state at `{project_path}/.harness/state.json`:
   "run_id": "uuid",
   "created_at": "ISO-8601",
   "updated_at": "ISO-8601",
+  "tech_stack": {
+    "frontend": "React 19 + Vite + TypeScript",
+    "backend": "Java 21 + Spring Boot 3.x + Maven",
+    "database": "MySQL 8",
+    "source": "fsd/SSD-SystemOverview.md"
+  },
   "phases": {
-    "requirements": { "status": "completed", "output": "docs/SSD-SystemOverview.md" },
+    "requirements": { "status": "completed", "output": "fsd/SSD-SystemOverview.md" },
+    "prototype": { "status": "completed", "output": "prototype/click-map.md" },
     "data_modeling": { "status": "completed", "output": "design/db-schema.sql" },
     "generation": { "status": "in_progress" },
     "testing": { "status": "pending" },

@@ -28,8 +28,8 @@ if [ "$1" = "--update" ] || [ "$1" = "-u" ]; then
     echo ""
 fi
 
-# 资源根目录（脚本位于 bash/ 子目录，需向上一级）
-HARNESS_HOME="$(cd "$(dirname "$0")/.." && pwd)"
+# 资源根目录
+HARNESS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 echo "🔧 AI Harness Engineering - CLI 工具配置向导"
 echo "============================================"

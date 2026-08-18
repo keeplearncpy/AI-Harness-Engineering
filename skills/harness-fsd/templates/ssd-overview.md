@@ -31,12 +31,22 @@ graph TD
     Backend --> Database
 ```
 
-## 5. Non-functional Requirements
+## 5. 技术选型 Tech Stack
+> 由需求分析师确定并写入，作为下游（数据建模/前端/后端）的技术栈唯一事实来源。
+
+| Layer | Choice | Version | Notes |
+|-------|--------|---------|-------|
+| Frontend | {{frontend_framework}} | {{frontend_version}} | {{frontend_notes}} |
+| Backend | {{backend_framework}} | {{backend_version}} | {{backend_notes}} |
+| Database | {{database}} | {{database_version}} | {{database_notes}} |
+| Cache/中间件 | {{middleware}} | {{middleware_version}} | {{middleware_notes}} |
+
+## 6. Non-functional Requirements
 - **Performance**: {{response_time, throughput}}
 - **Security**: {{auth, encryption, data_protection}}
 - **Scalability**: {{expected_growth, architecture_decisions}}
 - **Availability**: {{uptime_target}}
 
-## 6. Appendix
+## 7. Appendix
 - Glossary of terms
 - References to external documents

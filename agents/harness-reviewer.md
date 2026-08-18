@@ -2,7 +2,7 @@
 name: harness-reviewer
 description: Review generated code for quality, security, performance, and best practices
 mode: subagent
-model: qwen3.7-max
+model: deepseek-v4-flash-0731
 temperature: 0.1
 ---
 

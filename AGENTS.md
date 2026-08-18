@@ -13,7 +13,10 @@ This repo itself runs as an orchestrator agent loop. The `harness-orchestrator` 
 - All agents use YAML frontmatter with `name`, `description`, `mode`, `model`, `temperature`, `permission` fields
 - Skills are directories with `SKILL.md` as entry point, `templates/` for output patterns, `references/` for standards
 - Commands are markdown files in `commands/` with YAML frontmatter for `/harness-*` shortcuts
-- Agents follow a pipeline: FSD → Data Model → [Frontend | Backend] → Test → Review → Deploy
+- Agents follow a pipeline: FSD → [Prototype | Data Model] → [Frontend | Backend] → Test → Review → Deploy
+- Tech stack is decided in the FSD phase and written into SSD「技术选型」章节; dev agents resolve it dynamically (project_context > SSD > fallback default), never hardcoded
+- FSD docs live under `fsd/{模块}/feature-{功能名}-{索引}.md`（bug 修复为 `fix-bug-{修复名}-{索引}.md`）
+- Prototype outputs HTML wireframes under `prototype/` with `click-map.md`（页面/路由/菜单/按钮/表单点击关系，无图片）
 - Observability runs as a sidecar — never blocks the pipeline
 - All Chinese content uses 中文; code comments use English
 

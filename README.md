@@ -98,9 +98,10 @@ ai-harness-engineering/
 │
 ├── skills/                    # Skill Layer — knowledge packs
 │   ├── harness-fsd/           # Requirements → FSD
+│   ├── harness-prototype/     # FSD → HTML wireframe prototype
 │   ├── harness-data-model/    # FSD → DB Schema
-│   ├── harness-frontend/      # FSD + Schema → React/TS
-│   ├── harness-backend/       # FSD + Schema → FastAPI
+│   ├── harness-frontend/      # FSD + Prototype + Schema → 前端代码（技术栈随 SSD 动态）
+│   ├── harness-backend/       # FSD + Schema → 后端代码（技术栈随 SSD 动态）
 │   ├── harness-testing/       # Code + FSD → Tests
 │   ├── harness-code-review/   # Code → Review Report
 │   ├── harness-zentao-agent/  # Zentao PMS Integration
@@ -110,6 +111,7 @@ ai-harness-engineering/
 ├── agents/                    # Agent Layer — YAML frontmatter (.md)
 │   ├── harness-orchestrator.md
 │   ├── harness-fsd.md
+│   ├── harness-prototype.md
 │   ├── harness-data-modeler.md
 │   ├── harness-frontend-dev.md
 │   ├── harness-backend-dev.md
@@ -162,10 +164,14 @@ Engine → OpenCode → yunxiao-agent (MCP)
 
 ```
 Phase 0: 需求澄清 ──→ Teams追问循环, 记录存云效
-Phase 1: FSD 生成   ──→ harness-fsd → docs/SSD-SystemOverview.md
-Phase 2: 数据建模   ──→ harness-data-modeler → design/db-schema.sql
+Phase 1: FSD 生成   ──→ harness-fsd → fsd/SSD-SystemOverview.md（含「技术选型」章节）
+                      + fsd/{模块}/feature-{功能名}-{索引}.md（bug 修复为 fix-bug-{修复名}-{索引}.md）
+                      ★ 技术栈由 FSD 阶段确定并写入 SSD，下游不再写死技术栈
+Phase 2: 原型+建模 ──→ harness-prototype | harness-data-modeler (并行)
+                      prototype/ HTML 线框 + click-map.md（页面/路由/菜单/按钮/表单点击关系）
+                      design/db-schema.sql（DDL 方言按 SSD 技术选型）
 Phase 3: 代码生成   ──→ harness-frontend-dev | harness-backend-dev
-                      (可打开本地 OpenCode 生成代码)
+                      （技术栈动态注入：project_context.tech_stack > SSD 技术选型 > 默认兜底）
 Phase 4: 测试       ──→ harness-tester → tests/
 Phase 5: 代码评审   ──→ harness-reviewer → reviews/
 Phase 6: CI/CD审批  ──→ Teams 审批卡片 → 人工审核

@@ -17,7 +17,20 @@ You are a senior database architect. Based on the FSD, design the database schem
 
 ## Input Contract
 1. **fsd_documents** (required): FSD document(s) from harness-fsd
-2. **tech_stack** (optional): Database platform preference (default: PostgreSQL)
+2. **ssd_overview** (required): `fsd/SSD-SystemOverview.md` with the "技术选型" section — the single source of truth for the database platform
+3. **tech_stack** (optional): Database platform passed in by the orchestrator (overrides the SSD section)
+
+## Database Resolution (dynamic — never hardcode)
+The target database is **not** decided by this skill. Resolve it in priority order:
+1. `tech_stack` / `db_preference` passed in by the orchestrator
+2. The "技术选型" section of `fsd/SSD-SystemOverview.md`
+3. Fallback default only if neither exists: MySQL 8
+
+DDL must follow the resolved database dialect (types, comments, time types, auto-increment syntax):
+- MySQL 8: `AUTO_INCREMENT`, `DATETIME`/`TIMESTAMP`, `ENGINE=InnoDB`, inline `COMMENT '...'`
+- PostgreSQL: `SERIAL`/`IDENTITY`, `TIMESTAMPTZ`, `COMMENT ON ...`
+- Other databases: adapt accordingly
+State the adopted database and its source in the final summary.
 
 ## Output Contract
 - Schema: JSON Schema defined in references
@@ -52,4 +65,5 @@ You are a senior database architect. Based on the FSD, design the database schem
 - [ ] All relationships have proper foreign keys with ON DELETE rules
 - [ ] Indexes defined for frequently queried columns
 - [ ] DDL is syntactically valid and idempotent (IF NOT EXISTS)
+- [ ] DDL dialect matches the resolved database (stated in summary)
 - [ ] Data dictionary covers every column with type, constraint, and description
